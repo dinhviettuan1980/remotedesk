@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const version = "0.2.2"
+const version = "0.2.3"
 
 func main() {
 	cfgPath := flag.String("config", "", "path to config.json (default: next to the binary, then user config dir)")

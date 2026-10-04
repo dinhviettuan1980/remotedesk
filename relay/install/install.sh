@@ -15,45 +15,29 @@ mkdir -p "$DIR" "$HOME/Library/LaunchAgents"
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 
-# Wrap the agent in a real .app bundle: macOS privacy permissions (TCC) attach
-# reliably to a bundle id, and the list shows "RemoteDesk" instead of a bare binary.
+# The agent is a signed .app bundle built by scripts/build.sh. It is installed
+# as-is (never re-signed here): macOS keeps Screen Recording / Accessibility
+# for a new version as long as the bundle id and signing certificate match.
 APP="$DIR/RemoteDesk.app"
-BIN="$APP/Contents/MacOS/remote-agent"
+# Grants carry over only from an agent signed with the same certificate; a first
+# install or the old ad-hoc build means asking for them (once).
+NEED_GRANT=1
+if [ -d "$APP" ] && codesign -dv "$APP" 2>&1 | grep -q '^TeamIdentifier=[A-Z0-9]'; then NEED_GRANT=0; fi
 echo "==> Tải agent..."
-mkdir -p "$APP/Contents/MacOS"
-curl -fsSL -H "Authorization: Bearer $TOKEN" "$SERVER/dl/remote-agent-darwin" -o "$DIR/agent.download"
-chmod +x "$DIR/agent.download"
-# Re-signing changes nothing for an identical binary, but a new binary makes
-# macOS ask for Screen Recording/Accessibility again — so only touch it on change.
-# (codesign rewrites the binary in place, so compare against the hash of what we downloaded last time)
-NEW_SHA="$(shasum -a 256 "$DIR/agent.download" | cut -d' ' -f1)"
+TMPA="$(mktemp -d)"
+curl -fsSL -H "Authorization: Bearer $TOKEN" "$SERVER/dl/RemoteDesk-agent-mac.zip" -o "$TMPA/agent.zip"
+NEW_SHA="$(shasum -a 256 "$TMPA/agent.zip" | cut -d' ' -f1)"
 if [ -f "$DIR/agent.sha256" ] && [ "$(cat "$DIR/agent.sha256")" = "$NEW_SHA" ] && codesign -v "$APP" 2>/dev/null; then
-  rm -f "$DIR/agent.download"
-  echo "   agent không đổi — giữ nguyên (không phải cấp quyền lại)"
+  echo "   agent không đổi — giữ nguyên"
   AGENT_CHANGED=0
 else
-  mv -f "$DIR/agent.download" "$BIN"
+  ditto -x -k "$TMPA/agent.zip" "$TMPA"
+  rm -rf "$APP"
+  ditto "$TMPA/RemoteDesk.app" "$APP"
   echo "$NEW_SHA" > "$DIR/agent.sha256"
   AGENT_CHANGED=1
 fi
-[ "$AGENT_CHANGED" = 1 ] && cat > "$APP/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleIdentifier</key><string>$LABEL</string>
-  <key>CFBundleName</key><string>RemoteDesk</string>
-  <key>CFBundleDisplayName</key><string>RemoteDesk</string>
-  <key>CFBundleExecutable</key><string>remote-agent</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>LSUIElement</key><true/>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
-</dict>
-</plist>
-PLIST
-[ "$AGENT_CHANGED" = 1 ] && codesign --force -s - -i "$LABEL" "$APP"
+rm -rf "$TMPA"
 rm -f "$DIR/remote-agent" # pre-bundle layout
 
 if [ "$WITH_APP" = 1 ]; then
@@ -118,7 +102,8 @@ EOF
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "==> Agent đang chạy (launchd: $LABEL)"
 echo
-if [ "$AGENT_CHANGED" = 1 ]; then
+if [ "$AGENT_CHANGED" = 1 ] && [ "$NEED_GRANT" = 1 ]; then
+  echo "(Nếu RemoteDesk đã có trong danh sách quyền từ bản cũ: xoá nó bằng nút − rồi thêm lại.)"
   echo "QUAN TRỌNG — cấp 2 quyền cho 'RemoteDesk' trong System Settings › Privacy & Security:"
   echo "   1. Screen & System Audio Recording"
   echo "   2. Accessibility"

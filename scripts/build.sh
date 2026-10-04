@@ -18,7 +18,41 @@ TMP="$(mktemp -d)"
 GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CC="clang -arch x86_64" go build -trimpath -ldflags "-s -w" -o "$TMP/amd64" .
 GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 CC="clang -arch arm64" go build -trimpath -ldflags "-s -w" -o "$TMP/arm64" .
 lipo -create -output "$OUT/remote-agent-darwin" "$TMP/amd64" "$TMP/arm64"
-codesign --force -s - -i vn.tuandv.remotedesk "$OUT/remote-agent-darwin"
+# Sign with a stable identity: macOS ties Screen Recording/Accessibility grants
+# to the code's designated requirement. Ad-hoc → requirement = cdhash, so every
+# build lost them; with a certificate it is "bundle id + certificate name" and
+# grants survive updates. MAC_SIGN_ID: a codesigning identity (SHA-1 or name);
+# default = the owner's Apple Development certificate (IMIP team), if present.
+MAC_SIGN_ID="${MAC_SIGN_ID:-1D4539CE01A19A7B2E23A4D20C6FA23C454344CF}" # Apple Development: Tuan Dinh (3B8X54H7KQ), team IMIP
+security find-identity -v -p codesigning | grep -q "$MAC_SIGN_ID" || { echo "  (signing identity $MAC_SIGN_ID not found: ad-hoc — macOS will ask for permissions again after updates)"; MAC_SIGN_ID=-; }
+codesign --force -s "$MAC_SIGN_ID" -i vn.tuandv.remotedesk "$OUT/remote-agent-darwin"
+# The agent as a signed .app bundle (what install.sh installs: TCC attaches to
+# the bundle id, and the privacy lists show "RemoteDesk").
+APPB="$TMP/RemoteDesk.app"
+mkdir -p "$APPB/Contents/MacOS"
+cp "$OUT/remote-agent-darwin" "$APPB/Contents/MacOS/remote-agent"
+VERSION="$(sed -n 's/^const version = "\(.*\)"/\1/p' main.go)"
+cat > "$APPB/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>vn.tuandv.remotedesk</string>
+  <key>CFBundleName</key><string>RemoteDesk</string>
+  <key>CFBundleDisplayName</key><string>RemoteDesk</string>
+  <key>CFBundleExecutable</key><string>remote-agent</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+</dict>
+</plist>
+PLIST
+codesign --force -s "$MAC_SIGN_ID" -i vn.tuandv.remotedesk "$APPB"
+codesign -d -r- "$APPB" 2>&1 | sed -n 's/^designated => /  requirement: /p'
+rm -f "$OUT/RemoteDesk-agent-mac.zip"
+(cd "$TMP" && ditto -c -k --keepParent RemoteDesk.app "$OUT/RemoteDesk-agent-mac.zip")
 rm -rf "$TMP"
 
 echo "▸ viewer app: windows"
