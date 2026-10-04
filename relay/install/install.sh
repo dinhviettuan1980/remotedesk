@@ -19,6 +19,7 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 # as-is (never re-signed here): macOS keeps Screen Recording / Accessibility
 # for a new version as long as the bundle id and signing certificate match.
 APP="$DIR/RemoteDesk.app"
+BIN="$APP/Contents/MacOS/remote-agent"
 # Grants carry over only from an agent signed with the same certificate; a first
 # install or the old ad-hoc build means asking for them (once).
 NEED_GRANT=1
