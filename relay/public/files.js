@@ -7,9 +7,10 @@
 //   • Drag files onto the screen: upload into Downloads.
 //   • Paste (⌘V / Ctrl+V) files copied on this machine: upload, put them on
 //     the remote clipboard, then send the paste keystroke there.
-//   • Files copied on the remote machine come down by themselves into this
-//     machine's Downloads (a web page may not put files on the OS clipboard,
-//     so this is as close to "paste here" as a browser gets). Big copies ask.
+//   • Files copied on the remote machine: the 📥 button (with a count) and a
+//     short prompt offer them; one click downloads them into this machine's
+//     Downloads. Nothing comes down on its own — copying there is often just
+//     for pasting there. (A web page may not put files on the OS clipboard.)
 //
 // Everything goes over the relay WebSocket, with at most FILE_WINDOW bytes in
 // flight, so the video sharing that socket stays smooth.
@@ -18,12 +19,12 @@ const FILE_CHUNK = 64 * 1024;
 const FILE_WINDOW = 1024 * 1024;
 const FILE_ACK_GAP = 256 * 1024;
 const FILES_MIN_AGENT = '0.2.2';
-const AUTO_GET_BYTES = 500 * 1024 * 1024;
 
 const X = { // per-page transfer state (reset with each session)
   seq: 0,
   jobs: new Map(), // id -> job
   path: '',
+  copied: [], // files last copied on the remote machine (📥)
 };
 
 function fmtSize(n) {
@@ -73,6 +74,7 @@ function filesReset() {
   $('files-path').textContent = '';
   $('clip-toast').hidden = true;
   $('files-panel').hidden = true;
+  setCopied([]);
 }
 
 // ---------------------------------------------------------------- jobs + UI
@@ -206,7 +208,7 @@ function onFileMsg(m) {
         saveBlob(job.name, job.chunks);
         job.chunks = [];
         jobEnd(job, `Đã tải ${fmtSize(job.size)}`, true);
-        if (job.fromCopy) clipToast(`Đã tải ${job.name} về thư mục Downloads của máy này.`, null, null, 8000);
+        if (job.fromCopy) clipToast(`Đã tải ${job.name} về thư mục Downloads của máy này.`, null, null, 6000);
       }
       else { jobEnd(job, `Đã lưu: ${shortPath(m.path)}`, true); if (job.resolve) job.resolve(m.path); }
       break;
@@ -279,21 +281,34 @@ function fetchCopied(files, quiet) {
   }
 }
 
-// Copied on the remote machine: while controlling it, small copies download
-// at once; big ones (or in view-only mode) wait for a click.
+// 📥 on the toolbar: what was last copied over there, ready to download.
+function setCopied(files) {
+  X.copied = files;
+  const b = $('btn-getclip');
+  b.hidden = files.length === 0;
+  b.textContent = files.length > 1 ? `📥 ${files.length}` : '📥';
+  const bytes = files.reduce((n, f) => n + (f.size || 0), 0);
+  b.title = files.length ? `Tải về máy này: ${files.map((f) => f.name).join(', ')} (${fmtSize(bytes)})` : '';
+}
+
+function getCopied() {
+  const files = X.copied;
+  if (!files.length || !filesReady()) return;
+  setCopied([]);
+  clipToast(`Đang tải ${files.length > 1 ? `${files.length} file` : files[0].name} về Downloads…`, null, null, 4000);
+  fetchCopied(files, true);
+}
+
+// Copied on the remote machine: offer it (📥 + a short prompt); nothing
+// downloads until asked.
 function showClipToast(files) {
   const real = files.filter((f) => !f.dir);
   if (!files.length) return;
   const names = files.slice(0, 3).map((f) => f.name + (f.dir ? ' (thư mục)' : '')).join(', ') + (files.length > 3 ? `, … (${files.length} mục)` : '');
   const bytes = real.reduce((n, f) => n + (f.size || 0), 0);
-  if (real.length && S && S.control && bytes <= AUTO_GET_BYTES && verAtLeast(S.agent && S.agent.ver, FILES_MIN_AGENT)) {
-    clipToast(`Máy kia vừa copy ${names} — đang tải về Downloads của máy này…`, null);
-    fetchCopied(real, true);
-    return;
-  }
+  setCopied(real);
   clipToast(`Máy kia vừa copy: ${names}`,
-    real.length ? `${real.length > 1 ? `Tải ${real.length} file` : 'Tải'} về (${fmtSize(bytes)})` : null,
-    () => fetchCopied(real, false));
+    real.length ? `Tải về (${fmtSize(bytes)})` : null, getCopied, 6000);
 }
 $('clip-toast-close').onclick = () => { $('clip-toast').hidden = true; };
 
@@ -352,6 +367,8 @@ function showFilesPanel() {
   p.style.top = `${$('toolbar').offsetHeight}px`; // the toolbar wraps on narrow windows
   p.hidden = false;
 }
+
+$('btn-getclip').onclick = () => { getCopied(); $('stage').focus(); };
 
 $('btn-files').onclick = () => {
   const p = $('files-panel');
