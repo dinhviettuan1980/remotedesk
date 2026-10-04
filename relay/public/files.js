@@ -7,7 +7,9 @@
 //   • Drag files onto the screen: upload into Downloads.
 //   • Paste (⌘V / Ctrl+V) files copied on this machine: upload, put them on
 //     the remote clipboard, then send the paste keystroke there.
-//   • Files copied on the remote machine: a prompt offers to download them.
+//   • Files copied on the remote machine come down by themselves into this
+//     machine's Downloads (a web page may not put files on the OS clipboard,
+//     so this is as close to "paste here" as a browser gets). Big copies ask.
 //
 // Everything goes over the relay WebSocket, with at most FILE_WINDOW bytes in
 // flight, so the video sharing that socket stays smooth.
@@ -16,6 +18,7 @@ const FILE_CHUNK = 64 * 1024;
 const FILE_WINDOW = 1024 * 1024;
 const FILE_ACK_GAP = 256 * 1024;
 const FILES_MIN_AGENT = '0.2.2';
+const AUTO_GET_BYTES = 500 * 1024 * 1024;
 
 const X = { // per-page transfer state (reset with each session)
   seq: 0,
@@ -151,12 +154,13 @@ async function uploadFiles(files) {
 
 // ---------------------------------------------------------------- download
 
-function downloadPath(path, name, size) {
-  if (!filesReady()) return;
-  showFilesPanel();
+function downloadPath(path, name, size, quiet) {
+  if (!filesReady()) return null;
+  if (!quiet) showFilesPanel();
   const job = newJob('down', name || path.split(/[\\/]/).pop(), size || 0);
   job.path = path;
   sendNow({ t: 'fget', id: job.id, path });
+  return job;
 }
 
 function onFileData(buf) {
@@ -198,7 +202,12 @@ function onFileMsg(m) {
       break;
     case 'fdone':
       if (!job) break;
-      if (job.kind === 'down') { saveBlob(job.name, job.chunks); job.chunks = []; jobEnd(job, `Đã tải ${fmtSize(job.size)}`, true); }
+      if (job.kind === 'down') {
+        saveBlob(job.name, job.chunks);
+        job.chunks = [];
+        jobEnd(job, `Đã tải ${fmtSize(job.size)}`, true);
+        if (job.fromCopy) clipToast(`Đã tải ${job.name} về thư mục Downloads của máy này.`, null, null, 8000);
+      }
       else { jobEnd(job, `Đã lưu: ${shortPath(m.path)}`, true); if (job.resolve) job.resolve(m.path); }
       break;
     case 'ferr':
@@ -253,18 +262,38 @@ function renderDir(m) {
 
 // ---------------------------------------------------------------- copied on the remote machine
 
+function clipToast(text, button, onclick, ms = 20_000) {
+  const t = $('clip-toast');
+  $('clip-toast-text').textContent = text;
+  $('clip-toast-get').hidden = !button;
+  if (button) { $('clip-toast-get').textContent = button; $('clip-toast-get').onclick = () => { t.hidden = true; onclick(); }; }
+  t.hidden = false;
+  clearTimeout(t.timer);
+  t.timer = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+function fetchCopied(files, quiet) {
+  for (const f of files) {
+    const job = downloadPath(f.path, f.name, f.size, quiet);
+    if (job) job.fromCopy = true;
+  }
+}
+
+// Copied on the remote machine: while controlling it, small copies download
+// at once; big ones (or in view-only mode) wait for a click.
 function showClipToast(files) {
   const real = files.filter((f) => !f.dir);
   if (!files.length) return;
-  const t = $('clip-toast');
   const names = files.slice(0, 3).map((f) => f.name + (f.dir ? ' (thư mục)' : '')).join(', ') + (files.length > 3 ? `, … (${files.length} mục)` : '');
-  $('clip-toast-text').textContent = `Máy kia vừa copy: ${names}`;
-  $('clip-toast-get').hidden = real.length === 0;
-  $('clip-toast-get').textContent = real.length > 1 ? `Tải ${real.length} file về` : 'Tải về';
-  $('clip-toast-get').onclick = () => { t.hidden = true; for (const f of real) downloadPath(f.path, f.name, f.size); };
-  t.hidden = false;
-  clearTimeout(t.timer);
-  t.timer = setTimeout(() => { t.hidden = true; }, 20_000);
+  const bytes = real.reduce((n, f) => n + (f.size || 0), 0);
+  if (real.length && S && S.control && bytes <= AUTO_GET_BYTES && verAtLeast(S.agent && S.agent.ver, FILES_MIN_AGENT)) {
+    clipToast(`Máy kia vừa copy ${names} — đang tải về Downloads của máy này…`, null);
+    fetchCopied(real, true);
+    return;
+  }
+  clipToast(`Máy kia vừa copy: ${names}`,
+    real.length ? `${real.length > 1 ? `Tải ${real.length} file` : 'Tải'} về (${fmtSize(bytes)})` : null,
+    () => fetchCopied(real, false));
 }
 $('clip-toast-close').onclick = () => { $('clip-toast').hidden = true; };
 
