@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="color-scheme" content="dark">
+  <title>RemoteDesk</title>
+  <link rel="icon" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="theme-color" content="#171a1f">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Login: asked once, then remembered for a year via cookie. -->
+  <section id="login" class="screen" hidden>
+    <form id="login-form" class="card">
+      <h1>RemoteDesk</h1>
+      <p class="muted">Nhập mã truy cập một lần — trình duyệt sẽ nhớ.</p>
+      <input id="login-token" type="password" autocomplete="current-password" placeholder="Mã truy cập" required>
+      <button type="submit">Đăng nhập</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <section id="devices" class="screen" hidden>
+    <header class="bar">
+      <h1>RemoteDesk</h1>
+      <span class="bar-actions">
+        <button id="btn-install" hidden>⬇ Cài app</button>
+        <a class="muted small" href="/logout">Đăng xuất</a>
+      </span>
+    </header>
+    <ul id="device-list" class="devices"></ul>
+    <p id="device-empty" class="muted center" hidden>Chưa có máy nào online. Cài agent lên máy cần điều khiển.</p>
+    <details id="install" class="install">
+      <summary>Cài RemoteDesk lên máy tính</summary>
+      <p class="muted small"><b>Agent + App</b>: máy được điều khiển, và có app RemoteDesk để điều khiển máy khác. <b>Chỉ agent</b>: máy chỉ để được điều khiển (điều khiển nó từ trình duyệt / iPhone).</p>
+      <div class="install-grid">
+        <div class="install-card">
+          <h2>⊞ Windows</h2>
+          <a id="dl-win-exe" class="btn" href="#">Tải bộ cài · Agent + App</a>
+          <a id="dl-win-exe-agent" class="btn btn-secondary" href="#">Tải bộ cài · Chỉ agent</a>
+          <ol class="steps small muted">
+            <li>Bấm đúp file vừa tải → <b>Yes</b> khi hỏi quyền Admin.</li>
+            <li>Nếu hiện “Windows protected your PC”: <b>More info</b> → <b>Run anyway</b>.</li>
+            <li>Chờ cửa sổ cài báo <b>XONG</b> (lần đầu tải ffmpeg ~100 MB).</li>
+          </ol>
+        </div>
+        <div class="install-card">
+          <h2> macOS</h2>
+          <a id="dl-mac-pkg" class="btn" href="#">Tải bộ cài · Agent + App</a>
+          <a id="dl-mac-pkg-agent" class="btn btn-secondary" href="#">Tải bộ cài · Chỉ agent</a>
+          <ol class="steps small muted">
+            <li>Bấm đúp file .pkg. Nếu macOS chặn: System Settings › Privacy &amp; Security › <b>Open Anyway</b>.</li>
+            <li>Continue → Install (nhập mật khẩu Mac).</li>
+            <li>Bật <b>RemoteDesk</b> trong <b>Screen &amp; System Audio Recording</b> và <b>Accessibility</b> (chỉ lần đầu).</li>
+          </ol>
+          <p class="muted small">Cần ffmpeg — bộ cài tự cài qua Homebrew nếu máy có Homebrew.</p>
+        </div>
+      </div>
+      <details class="alt">
+        <summary class="small">Cách khác (dòng lệnh)</summary>
+        <p class="muted small">Windows · PowerShell — Agent + App / Chỉ agent:</p>
+        <div class="cmd"><code id="cmd-win-full"></code><button data-copy="cmd-win-full">Copy</button></div>
+        <div class="cmd"><code id="cmd-win-agent"></code><button data-copy="cmd-win-agent">Copy</button></div>
+        <p class="muted small">macOS · Terminal — Agent + App / Chỉ agent:</p>
+        <div class="cmd"><code id="cmd-mac-full"></code><button data-copy="cmd-mac-full">Copy</button></div>
+        <div class="cmd"><code id="cmd-mac-agent"></code><button data-copy="cmd-mac-agent">Copy</button></div>
+      </details>
+      <p class="muted small">⚠︎ Bộ cài chứa mã truy cập — đừng gửi cho người khác.</p>
+    </details>
+    <p id="install-hint" class="muted small center" hidden></p>
+    <p id="unsupported" class="error center" hidden>Trình duyệt này không hỗ trợ WebCodecs. Hãy dùng Chrome, Edge hoặc Safari mới.</p>
+  </section>
+
+  <section id="session" class="screen" hidden>
+    <div id="toolbar" class="toolbar">
+      <button id="btn-back" title="Ngắt kết nối">✕</button>
+      <button id="btn-mode" class="mode">👁 Chỉ xem</button>
+      <span id="sess-name" class="name"></span>
+      <span id="sess-stats" class="stats"></span>
+      <span class="spacer"></span>
+      <select id="sel-quality" title="Chất lượng">
+        <option value="eco">Tiết kiệm · 720p</option>
+        <option value="balanced">Cân bằng · 1080p</option>
+        <option value="sharp">Nét · 1080p 60fps</option>
+        <option value="max">Tối đa · gốc</option>
+      </select>
+      <select id="sel-zoom" title="Zoom">
+        <option value="fit">🔍 Vừa khung</option>
+        <option value="width">🔍 Vừa chiều ngang</option>
+        <option value="1">🔍 100%</option>
+        <option value="1.25">🔍 125%</option>
+        <option value="1.5">🔍 150%</option>
+        <option value="2">🔍 200%</option>
+      </select>
+      <label class="chk" title="Kết nối trực tiếp (WebRTC) khi mạng cho phép: mượt và ít trễ hơn. Không được thì tự dùng relay."><input id="chk-p2p" type="checkbox"> P2P</label>
+      <label class="chk" title="Đổi Cmd ⇄ Ctrl (Mac ⇄ Windows)"><input id="chk-swap" type="checkbox"> ⌘⇄Ctrl</label>
+      <select id="sel-keys" title="Gửi tổ hợp phím">
+        <option value="">Phím…</option>
+        <option value="meta">Win / ⌘</option>
+        <option value="alt-tab">Alt+Tab</option>
+        <option value="cmd-tab">⌘+Tab</option>
+        <option value="cmd-space">⌘+Space</option>
+        <option value="win-d">Win+D</option>
+        <option value="ctrl-shift-esc">Ctrl+Shift+Esc</option>
+        <option value="esc">Esc</option>
+        <option value="tab">Tab</option>
+        <option value="enter">Enter</option>
+        <option value="del">Delete</option>
+        <option value="left">←</option>
+        <option value="right">→</option>
+        <option value="up">↑</option>
+        <option value="down">↓</option>
+        <option value="ctrl-c">Ctrl+C</option>
+        <option value="ctrl-v">Ctrl+V</option>
+        <option value="cmd-c">⌘+C</option>
+        <option value="cmd-v">⌘+V</option>
+        <option value="restart-agent">Khởi động lại agent</option>
+      </select>
+      <button id="btn-kb" title="Bàn phím (điện thoại)">⌨</button>
+      <button id="btn-fs" title="Toàn màn hình (khoá phím hệ thống)">⛶</button>
+    </div>
+    <div id="stage" class="stage" tabindex="0">
+      <canvas id="screen"></canvas>
+      <div id="overlay" class="overlay">Đang kết nối…</div>
+      <textarea id="vkb" class="vkb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Bàn phím"></textarea>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

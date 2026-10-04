@@ -1,0 +1,29 @@
+# RemoteDesk relay. Installed by scripts/deploy.sh.
+[Unit]
+Description=RemoteDesk relay (agent <-> browser viewer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pc1
+Group=pc1
+WorkingDirectory=/home/pc1/remote-desk/relay
+EnvironmentFile=/home/pc1/remote-desk/relay/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target

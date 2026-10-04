@@ -1,0 +1,29 @@
+#!/bin/bash
+# Runs as root from Installer.app. The real work (agent LaunchAgent, app,
+# config) belongs to the logged-in user, so hand off to them.
+LOG=/tmp/remotedesk-install.log
+U="$(stat -f%Su /dev/console)"
+UIDN="$(id -u "$U")"
+SCRIPT="$(mktemp /tmp/rd-install.XXXXXX)"
+cp "$(dirname "$0")/rd-install.sh" "$SCRIPT"
+chmod 755 "$SCRIPT"
+echo "== $(date) installing for $U" >> "$LOG"
+launchctl asuser "$UIDN" sudo -u "$U" -H env PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  /bin/bash "$SCRIPT" >> "$LOG" 2>&1
+rc=$?
+rm -f "$SCRIPT"
+# Stay reachable: no system sleep while on the charger (display may still sleep).
+pmset -c sleep 0 >> "$LOG" 2>&1 || true
+
+# After a reboot the agent starts at login; without automatic login the Mac waits
+# at the login window. Offer (not force) to open the setting.
+if [ $rc -eq 0 ] && [ -z "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null)" ]; then
+  ans="$(launchctl asuser "$UIDN" sudo -u "$U" osascript -e 'display dialog "RemoteDesk đã cài xong và sẽ tự chạy mỗi khi bạn đăng nhập.\n\nĐể máy tự chạy RemoteDesk cả sau khi khởi động lại (không cần ai đăng nhập), bật: Users & Groups › Automatically log in as.\n(Không dùng được nếu đang bật FileVault.)" buttons {"Để sau", "Mở cài đặt"} default button "Để sau" with title "RemoteDesk"' 2>/dev/null)"
+  case "$ans" in *"Mở cài đặt"*) launchctl asuser "$UIDN" sudo -u "$U" open "x-apple.systempreferences:com.apple.Users-Groups-Settings.extension" ;; esac
+fi
+
+# First install (or new agent): show where to grant Screen Recording + Accessibility.
+if [ $rc -eq 0 ] && tail -30 "$LOG" | grep -q "QUAN TRỌNG"; then
+  launchctl asuser "$UIDN" sudo -u "$U" open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+fi
+exit $rc
