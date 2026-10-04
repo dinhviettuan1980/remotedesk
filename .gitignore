@@ -4,3 +4,4 @@ dist/
 relay/dist/
 *.log
 data/
+build/

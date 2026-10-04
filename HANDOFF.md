@@ -41,6 +41,11 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
   - **Trên Mac**: binary mới làm macOS bắt cấp lại quyền, vì chữ ký là ad-hoc. Bộ cài so hash (`agent.sha256`) nên chỉ thay khi binary thật sự đổi.
 - Bộ cài `.pkg` của Mac phải build lại (`setup-mac/build.sh`) mỗi khi `install.sh` hoặc token đổi. `Setup.exe` của Windows thì không cần, vì server gắn cấu hình lúc tải.
 
+## Bộ cài Windows NSIS + cập nhật từ xa (2026-10-04, chưa deploy, chưa chạy thử trên Windows)
+- `setup-win/nsis/installer.nsi` + `register.ps1`; build bằng `scripts/build.sh` (cần `scripts/setup-nsis.sh` một lần; **không** dùng `brew install makensis`: nó build LLVM/Rust từ nguồn). Đóng gói agent + ffmpeg (gyan essentials, cache ở `build/win/`) + app. Relay vẫn gắn trailer RDCFG1 (NSIS cho phép dữ liệu thừa ở cuối file).
+- Agent 0.2.1: `-import-config`, lệnh `update` (Windows: tải Agent-Setup.exe của token, chạy `/S` qua task `RemoteDesk-Update`). Máy Windows nhà đang 0.2.0 → lần đầu phải cài tại máy (UAC trên secure desktop không bấm được từ xa).
+- Cần thử trên Windows thật: giao diện cài, cài đè bản cũ (giữ id/name), gỡ qua Settings › Apps, cập nhật từ xa.
+
 ## Chưa kiểm thử trên máy thật
 - `RemoteDesk-Setup.exe` / `RemoteDesk-Agent-Setup.exe` (Windows), kể cả bước hỏi Autologon.
 - `RemoteDesk-Installer.pkg` / `RemoteDesk-Agent-Installer.pkg` (Mac); phần postinstall chạy dưới user đang đăng nhập.

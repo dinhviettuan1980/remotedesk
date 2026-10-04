@@ -264,6 +264,12 @@ function onControl(m) {
     case 'error':
       setOverlay(m.msg);
       break;
+    case 'notice': { // short status from the agent (e.g. update progress)
+      setOverlay(m.msg);
+      const msg = m.msg;
+      setTimeout(() => { if ($('overlay').textContent === msg) setOverlay(''); }, 6000);
+      break;
+    }
   }
 }
 
@@ -906,6 +912,11 @@ $('sel-keys').onchange = (e) => {
   if (!S || !S.control) { nudgeMode(); return; }
   if (v === 'restart-agent') {
     if (confirm('Khởi động lại agent trên máy kia?')) sendNow({ t: 'restart' });
+    return;
+  }
+  if (v === 'update-agent') {
+    // The agent downloads the current installer and runs it silently (no UAC: it is already elevated).
+    if (confirm('Cập nhật agent trên máy kia lên bản mới nhất? Phiên sẽ ngắt khoảng 10–20 giây rồi tự nối lại.')) sendNow({ t: 'update' });
     return;
   }
   const keys = COMBOS[v];

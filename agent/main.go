@@ -20,7 +20,17 @@ func main() {
 	cfgPath := flag.String("config", "", "path to config.json (default: next to the binary, then user config dir)")
 	check := flag.Bool("check", false, "self-test: detect encoders, capture 3 s of screen, then exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	importCfg := flag.String("import-config", "", "installer use: merge server+token from this JSON file into config.json and exit")
 	flag.Parse()
+
+	if *importCfg != "" {
+		if err := importConfig(*importCfg); err != nil {
+			attachConsole()
+			fmt.Fprintln(os.Stderr, "import-config:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *check || *showVersion {
 		attachConsole()

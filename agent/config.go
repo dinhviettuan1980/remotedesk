@@ -108,3 +108,47 @@ func findFFmpeg(c *Config, cfgDir string) (string, error) {
 	}
 	return "", fmt.Errorf("ffmpeg not found (set \"ffmpeg\" in config.json)")
 }
+
+// importConfig is run by the Windows installer: it merges server + token from
+// the installer's appended config into config.json next to the binary,
+// keeping this machine's id, name and tuning, and points at the bundled ffmpeg.
+func importConfig(src string) error {
+	var in struct {
+		Server string `json:"server"`
+		Token  string `json:"token"`
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(bytes.TrimPrefix(data, []byte("\xEF\xBB\xBF")), &in); err != nil {
+		return err
+	}
+	if in.Server == "" || in.Token == "" {
+		return errors.New("installer config: server and token are required")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(exe)
+	dst := filepath.Join(dir, "config.json")
+	cfg := map[string]any{}
+	if old, err := os.ReadFile(dst); err == nil {
+		_ = json.Unmarshal(bytes.TrimPrefix(old, []byte("\xEF\xBB\xBF")), &cfg) // keep id, name, encoder…
+	}
+	cfg["server"] = strings.TrimRight(in.Server, "/")
+	cfg["token"] = in.Token
+	ff := filepath.Join(dir, "ffmpeg")
+	if runtime.GOOS == "windows" {
+		ff += ".exe"
+	}
+	if _, err := os.Stat(ff); err == nil {
+		cfg["ffmpeg"] = ff
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, out, 0o600)
+}

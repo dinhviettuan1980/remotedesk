@@ -286,6 +286,17 @@ func (a *Agent) handle(data []byte) {
 		a.onRTC(m.Vid, m.SDP, m.Cand)
 	case "rtc-bye":
 		a.closePeer(m.Vid)
+	case "update":
+		go func() {
+			log.Printf("update requested by viewer")
+			a.sendJSON(map[string]string{"t": "notice", "msg": "Đang tải bản cập nhật agent…"})
+			if err := selfUpdate(a.cfg); err != nil {
+				log.Printf("update: %v", err)
+				a.sendJSON(map[string]string{"t": "notice", "msg": "Không cập nhật được: " + err.Error()})
+				return
+			}
+			a.sendJSON(map[string]string{"t": "notice", "msg": "Đang cài bản mới — phiên sẽ tự nối lại sau khoảng 10–20 giây."})
+		}()
 	case "restart":
 		log.Printf("restart requested by viewer")
 		a.leave()
