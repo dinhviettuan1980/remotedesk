@@ -25,7 +25,7 @@ echo "▸ viewer app: windows"
 (cd ../viewer-win && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-H=windowsgui -s -w" -o "$OUT/RemoteDesk.exe" .)
 echo "▸ installer: windows (Setup.exe base; relay appends config on download)"
 (cd ../setup-win && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$OUT/RemoteDesk-Setup-base.exe" .)
-echo "▸ installer: macOS (.pkg, embeds token from .env)"
+echo "▸ installer: macOS (.pkg, token-free: read from the download link)"
 ../setup-mac/build.sh "$OUT" >/dev/null
 echo "▸ viewer app: macOS"
 ../viewer-mac/build.sh "$OUT" >/dev/null

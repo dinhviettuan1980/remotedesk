@@ -11,7 +11,7 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
   - Chạy bằng systemd unit `remote-desk`, lắng nghe `127.0.0.1:8790`.
   - nginx site `remote.tuandv.id.vn`, chứng chỉ Let's Encrypt tên `remote-desk`.
   - DNS do PA Việt Nam quản lý, không có wildcard; mỗi subdomain mới phải tự thêm bản ghi A.
-- **Mã truy cập**: `REMOTE_TOKEN` trong `relay/.env` trên VPS, bản sao ở `~/remote-desk/.env` local (gitignored). Không commit, không dán vào chat.
+- **Mã truy cập**: nhiều người dùng, mỗi token chỉ thấy máy của mình (từ 2026-10-04). Token admin = `REMOTE_TOKEN` trong `relay/.env` trên VPS, bản sao ở `~/remote-desk/.env` local (gitignored); hai máy hiện có thuộc admin. Người dùng khác tạo ở trang `#/admin`, lưu ở `/home/pc1/remote-desk/data/users.json` (ngoài thư mục rsync). Không commit, không dán token vào chat.
 - **Các máy đang online**:
   - `macbook-pro-cua-tuandv`, tên hiển thị "MacBook Pro (công ty)": cài **agent + app**.
     - Agent ở `~/Library/Application Support/RemoteDesk/RemoteDesk.app`, chạy bằng LaunchAgent `vn.tuandv.remotedesk`.
@@ -57,5 +57,5 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
 
 ## Bảo mật cần làm
 - Mật khẩu SSH/sudo của VPS và một mật khẩu khác đã từng bị dán vào chat; **nên đổi**. Không mật khẩu nào nằm trong code.
-- Ai có token là điều khiển được mọi máy đã cài agent; đừng chia sẻ file bộ cài.
+- Ai có một token là điều khiển được mọi máy cài bằng token đó; link cài đặt chứa token, đừng chia sẻ nhầm. File `.pkg` của Mac không còn chứa token.
 - Code **chưa được commit**; nên `git add -A && git commit` để có mốc.

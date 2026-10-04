@@ -26,14 +26,17 @@
 
 ## Bảo mật
 
-Tất cả dựa trên một token dài (`REMOTE_TOKEN` trong `relay/.env` trên VPS, bản sao ở `.env` local, không commit).
+Mỗi token là một người dùng riêng: token chỉ thấy và điều khiển các máy được cài bằng chính token đó.
 
+- **Admin**: `REMOTE_TOKEN` trong `relay/.env` trên VPS (bản sao ở `.env` local, không commit). Admin tạo / đổi mã / khoá / xoá người dùng ở trang `#/admin`, nhưng không thấy máy của họ.
+- **Người dùng**: lưu ở `data/users.json` trên VPS (ngoài thư mục deploy, quyền 0600). Bấm "Copy tin nhắn gửi họ" để gửi link cài + mã.
 - Agent gửi token trong header.
-- Trình duyệt nhập token một lần, sau đó giữ cookie HttpOnly (giá trị là HMAC của token, không phải token).
+- Trình duyệt nhập token một lần, sau đó giữ cookie HttpOnly (id người dùng + HMAC của token, không phải token). Đổi mã hoặc khoá thì cookie, máy và phiên đang xem của người đó bị ngắt ngay.
+- Bộ cài `.pkg` của Mac không chứa token: nó đọc token từ link tải mà macOS lưu kèm file, nếu không có thì hỏi.
 - Đăng nhập sai 10 lần thì IP bị khoá 15 phút. nginx cũng giới hạn tốc độ `/login`.
 - WebSocket của viewer kiểm tra Origin.
 
-Lộ token nghĩa là người khác điều khiển được máy. Khi cần đổi: sửa `.env` trên VPS, restart relay, rồi cài lại agent.
+Lộ token nghĩa là người khác điều khiển được các máy của token đó. Token người dùng: bấm "Đổi mã" trên trang admin rồi cài lại máy. Token admin: sửa `.env` trên VPS, restart relay, rồi cài lại các máy của admin.
 
 ## Cài đặt
 

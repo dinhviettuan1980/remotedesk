@@ -1,13 +1,36 @@
 #!/bin/bash
 # Runs as root from Installer.app. The real work (agent LaunchAgent, app,
 # config) belongs to the logged-in user, so hand off to them.
+#
+# The .pkg holds no token, so one file serves every user. The token comes from
+# the link it was downloaded with (macOS keeps it in the kMDItemWhereFroms
+# attribute), else from the existing install (update), else the user types it.
 LOG=/tmp/remotedesk-install.log
+SERVER='{{SERVER}}'
+WITH_APP='{{WITH_APP}}'
+PKG="$1"
 U="$(stat -f%Su /dev/console)"
 UIDN="$(id -u "$U")"
+as_user() { launchctl asuser "$UIDN" sudo -u "$U" "$@"; }
+
+TOKEN="$(xattr -px com.apple.metadata:kMDItemWhereFroms "$PKG" 2>/dev/null | xxd -r -p |
+  LC_ALL=C tr -c 'A-Za-z0-9_%?&=./:-' '\n' | grep -o '[?&]t=[A-Za-z0-9_%-]\{20,\}' | head -1 | sed 's/^[?&]t=//')"
+CFG="$(eval echo "~$U")/Library/Application Support/RemoteDesk/config.json"
+[ -z "$TOKEN" ] && [ -f "$CFG" ] && TOKEN="$(plutil -extract token raw -o - "$CFG" 2>/dev/null)"
+if [ -z "$TOKEN" ]; then
+  TOKEN="$(as_user osascript -e 'text returned of (display dialog "Nhập mã truy cập RemoteDesk (người quản trị đã gửi cho bạn):" default answer "" with hidden answer buttons {"Huỷ", "OK"} default button "OK" cancel button "Huỷ" with title "RemoteDesk")' 2>/dev/null)"
+fi
+TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+echo "== $(date) installing for $U (token: $([ -n "$TOKEN" ] && echo found || echo missing))" >> "$LOG"
+[ -z "$TOKEN" ] && exit 1
+
 SCRIPT="$(mktemp /tmp/rd-install.XXXXXX)"
-cp "$(dirname "$0")/rd-install.sh" "$SCRIPT"
+if ! curl -fsSL -H "Authorization: Bearer $TOKEN" "$SERVER/install.sh?app=$WITH_APP" -o "$SCRIPT" 2>> "$LOG"; then
+  rm -f "$SCRIPT"
+  as_user osascript -e 'display dialog "Không tải được bộ cài RemoteDesk: mã truy cập sai hoặc đã bị thu hồi, hoặc máy chưa có mạng." buttons {"OK"} default button "OK" with icon stop with title "RemoteDesk"' >/dev/null 2>&1
+  exit 1
+fi
 chmod 755 "$SCRIPT"
-echo "== $(date) installing for $U" >> "$LOG"
 launchctl asuser "$UIDN" sudo -u "$U" -H env PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
   /bin/bash "$SCRIPT" >> "$LOG" 2>&1
 rc=$?

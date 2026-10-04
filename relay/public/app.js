@@ -25,7 +25,7 @@ const prefs = (() => {
 })();
 
 function show(name) {
-  for (const s of ['login', 'devices', 'session']) $(s).hidden = s !== name;
+  for (const s of ['login', 'devices', 'admin', 'session']) $(s).hidden = s !== name;
 }
 
 // ---------------------------------------------------------------- login
@@ -48,6 +48,7 @@ let devicesTimer = null;
 
 async function showDevices() {
   show('devices');
+  loadMe();
   $('unsupported').hidden = 'VideoDecoder' in window;
   await refreshDevices();
   loadInstall();
@@ -957,9 +958,151 @@ if (!IS_APP && /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.te
     : '';
 }
 
+// ---------------------------------------------------------------- who am I / admin
+
+async function loadMe() {
+  try {
+    const r = await fetch('/api/me', { cache: 'no-store' });
+    if (!r.ok) return null;
+    const me = await r.json();
+    $('me-name').textContent = me.admin ? '' : me.name;
+    $('lnk-admin').hidden = !me.admin;
+    return me;
+  } catch { return null; }
+}
+
+async function adminCall(method, path, body) {
+  const r = await fetch(path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401) { show('login'); throw new Error('login'); }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+function adminError(e) {
+  $('admin-error').hidden = !e;
+  $('admin-error').textContent = e ? `Lỗi: ${e.message || e}` : '';
+}
+
+async function showAdmin() {
+  clearInterval(devicesTimer);
+  show('admin');
+  const me = await loadMe();
+  if (!me) { show('login'); return; }
+  if (!me.admin) { location.hash = '#/'; return; }
+  await refreshUsers();
+}
+
+async function refreshUsers() {
+  let list;
+  try { list = await adminCall('GET', '/api/admin/users'); adminError(null); } catch (e) { adminError(e); return; }
+  $('user-empty').hidden = list.length > 0;
+  $('user-list').replaceChildren(...list.map(userItem));
+}
+
+// What to send the person: where to install, where to watch, their code.
+function userMessage(u) {
+  return [
+    `RemoteDesk – hướng dẫn cho ${u.name}`,
+    '',
+    '1) Cài lên máy cần được điều khiển (tải bằng chính link này):',
+    `   • Windows: ${u.install.agent.windowsExe}`,
+    `   • Mac: ${u.install.agent.macPkg}`,
+    '',
+    `2) Xem / điều khiển từ trình duyệt hoặc điện thoại: ${location.origin}`,
+    `   Mã truy cập: ${u.token}`,
+    '',
+    'Giữ kín link và mã này: ai có chúng là điều khiển được máy của bạn.',
+  ].join('\n');
+}
+
+function copyButton(label, text) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = label;
+  b.onclick = async () => {
+    try { await navigator.clipboard.writeText(text); b.textContent = 'Đã copy'; } catch { b.textContent = 'Lỗi'; }
+    setTimeout(() => { b.textContent = label; }, 1500);
+  };
+  return b;
+}
+
+function userItem(u) {
+  const li = document.createElement('li');
+  li.className = 'user' + (u.disabled ? ' disabled' : '');
+  li.innerHTML = `<div class="user-head"><span class="meta"><div class="title"></div><div class="sub"></div></span><span class="user-actions"></span></div>
+    <details class="user-links"><summary class="small">Link cài đặt &amp; mã truy cập</summary><div class="user-links-body"></div></details>`;
+  li.querySelector('.title').textContent = u.name;
+  const created = u.created ? new Date(u.created).toLocaleDateString('vi-VN') : '';
+  li.querySelector('.sub').textContent = `${u.disabled ? 'Đã khoá · ' : ''}${u.online} máy online · tạo ngày ${created}`;
+
+  const act = li.querySelector('.user-actions');
+  const button = (label, fn, cls) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.onclick = async () => { try { await fn(); adminError(null); } catch (e) { if (e.message !== 'cancel') adminError(e); } refreshUsers(); };
+    act.append(b);
+  };
+  const ask = (q) => { if (!confirm(q)) throw new Error('cancel'); };
+  act.append(copyButton('Copy tin nhắn gửi họ', userMessage(u)));
+  button('Đổi tên', async () => {
+    const name = prompt('Tên mới:', u.name);
+    if (!name || name.trim() === u.name) throw new Error('cancel');
+    await adminCall('POST', `/api/admin/users/${u.id}/rename`, { name });
+  });
+  button('Đổi mã', async () => {
+    ask(`Đổi mã của "${u.name}"? Máy và trình duyệt đang dùng mã cũ sẽ bị ngắt; phải cài lại máy bằng link mới.`);
+    await adminCall('POST', `/api/admin/users/${u.id}/rotate`);
+  });
+  if (u.disabled) button('Mở khoá', () => adminCall('POST', `/api/admin/users/${u.id}/enable`));
+  else button('Khoá', async () => { ask(`Khoá "${u.name}"? Mọi máy của họ sẽ offline cho tới khi mở khoá.`); await adminCall('POST', `/api/admin/users/${u.id}/disable`); });
+  button('Xoá', async () => { ask(`Xoá hẳn "${u.name}"? Không hoàn tác được.`); await adminCall('DELETE', `/api/admin/users/${u.id}`); }, 'danger');
+
+  const body = li.querySelector('.user-links-body');
+  const rows = [
+    ['Mã truy cập (đăng nhập trang web)', u.token],
+    ['Windows · chỉ agent', u.install.agent.windowsExe],
+    ['Windows · agent + app', u.install.full.windowsExe],
+    ['Mac · chỉ agent', u.install.agent.macPkg],
+    ['Mac · agent + app', u.install.full.macPkg],
+    ['Windows · PowerShell', u.install.agent.windowsPs],
+    ['Mac · Terminal', u.install.agent.mac],
+  ];
+  for (const [label, value] of rows) {
+    const p = document.createElement('p');
+    p.className = 'muted small';
+    p.textContent = label;
+    const row = document.createElement('div');
+    row.className = 'cmd';
+    const code = document.createElement('code');
+    code.textContent = value;
+    row.append(code, copyButton('Copy', value));
+    body.append(p, row);
+  }
+  return li;
+}
+
+$('user-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('user-name').value.trim();
+  if (!name) return;
+  try {
+    await adminCall('POST', '/api/admin/users', { name });
+    $('user-name').value = '';
+    adminError(null);
+  } catch (err) { adminError(err); }
+  refreshUsers();
+});
+
 // ---------------------------------------------------------------- routing
 
 async function route() {
+  if (location.hash === '#/admin') { stopSession(); showAdmin(); return; }
   const m = location.hash.match(/^#\/d\/(.+)$/);
   if (!m) { stopSession(); showDevices(); return; }
   const r = await fetch('/api/agents', { cache: 'no-store' }).catch(() => null);

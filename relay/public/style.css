@@ -30,7 +30,7 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
   border-radius: 14px; padding: 24px; display: grid; gap: 12px; }
 .card p { margin: 0; }
 
-#devices { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+#devices, #admin { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
 .bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .device { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--panel);
@@ -91,3 +91,20 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 #screen.view-only { cursor: default; }
 /* P2P decoder: must stay in the DOM and "visible" for browsers to keep decoding. */
 .p2p-video { position: absolute; left: 0; top: 0; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; }
+
+/* Admin: users */
+.user-form { display: flex; gap: 8px; margin: 14px 0; }
+.user-form input { flex: 1; min-width: 0; }
+.users { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.user { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.user.disabled { opacity: .6; }
+.user-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.user-head .meta { flex: 1; min-width: 180px; }
+.user-head .title { font-weight: 600; }
+.user-head .sub { color: var(--muted); font-size: 13px; }
+.user-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.user-actions button { font-size: 13px; padding: 4px 10px; }
+.user-actions .danger { color: var(--err); }
+.user-links { margin-top: 8px; }
+.user-links summary { color: var(--muted); cursor: pointer; }
+.user-links-body p { margin: 10px 0 4px; }

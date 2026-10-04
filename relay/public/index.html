@@ -29,6 +29,8 @@
       <h1>RemoteDesk</h1>
       <span class="bar-actions">
         <button id="btn-install" hidden>⬇ Cài app</button>
+        <a id="lnk-admin" class="small" href="#/admin" hidden>Quản lý người dùng</a>
+        <span id="me-name" class="muted small"></span>
         <a class="muted small" href="/logout">Đăng xuất</a>
       </span>
     </header>
@@ -73,6 +75,22 @@
     </details>
     <p id="install-hint" class="muted small center" hidden></p>
     <p id="unsupported" class="error center" hidden>Trình duyệt này không hỗ trợ WebCodecs. Hãy dùng Chrome, Edge hoặc Safari mới.</p>
+  </section>
+
+  <!-- Admin only: one access code per person; each code sees only its own machines. -->
+  <section id="admin" class="screen" hidden>
+    <header class="bar">
+      <h1>Quản lý người dùng</h1>
+      <span class="bar-actions"><a class="small" href="#/">← Máy của tôi</a></span>
+    </header>
+    <p class="muted small">Mỗi người dùng có mã truy cập riêng và chỉ thấy các máy được cài bằng mã đó. Admin cũng không thấy máy của họ. Đổi mã hoặc khoá thì máy và trình duyệt của người đó bị ngắt ngay.</p>
+    <form id="user-form" class="user-form">
+      <input id="user-name" placeholder="Tên người dùng (ví dụ: Chị Lan – kế toán)" maxlength="64" required>
+      <button type="submit">Tạo người dùng</button>
+    </form>
+    <p id="admin-error" class="error small" hidden></p>
+    <ul id="user-list" class="users"></ul>
+    <p id="user-empty" class="muted center" hidden>Chưa có người dùng nào.</p>
   </section>
 
   <section id="session" class="screen" hidden>

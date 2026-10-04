@@ -10,10 +10,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-const version = "0.2.0"
+const version = "0.2.1"
 
 func main() {
 	cfgPath := flag.String("config", "", "path to config.json (default: next to the binary, then user config dir)")
@@ -59,6 +60,12 @@ func main() {
 			// Another agent with the same id took over; don't fight it.
 			log.Printf("replaced by another agent with id %q; retrying in 60s", cfg.ID)
 			time.Sleep(60 * time.Second)
+			continue
+		}
+		if err != nil && strings.Contains(err.Error(), "HTTP 401") {
+			// Token revoked or rotated on the relay: nothing will change soon.
+			log.Printf("token rejected by the relay (revoked?); reinstall with a new token. Retrying in 5m")
+			time.Sleep(5 * time.Minute)
 			continue
 		}
 		if time.Since(start) > 30*time.Second {
