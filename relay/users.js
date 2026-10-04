@@ -8,6 +8,9 @@
 //   [{ id, name, token, created, disabled }]
 // Tokens are stored in clear because installers are rendered with them; the
 // file is written 0600.
+//
+// The admin can also log in with a password of their own (set on /admin),
+// kept next to it as a scrypt hash in admin.json.
 
 const fs = require('fs');
 const path = require('path');
@@ -19,12 +22,14 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
+const SCRYPT = { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const newToken = () => crypto.randomBytes(32).toString('base64url');
 const newId = () => 'u' + crypto.randomBytes(5).toString('hex');
 
 class Users {
   constructor(file, adminToken) {
     this.file = file;
+    this.adminFile = path.join(path.dirname(file), 'admin.json');
     this.admin = { id: 'admin', name: 'Admin', token: adminToken, admin: true, created: 0, disabled: false };
     this.users = [];
     this.load();
@@ -38,6 +43,28 @@ class Users {
       if (e.code !== 'ENOENT') console.error(`users: cannot read ${this.file}: ${e.message}`);
       this.users = [];
     }
+  }
+
+  // ---- admin password (scrypt, N=2^15)
+
+  adminPasswordSet() {
+    try { return !!JSON.parse(fs.readFileSync(this.adminFile, 'utf8')).hash; } catch { return false; }
+  }
+
+  setAdminPassword(pw) {
+    const salt = crypto.randomBytes(16);
+    const hash = crypto.scryptSync(pw, salt, 32, SCRYPT);
+    fs.mkdirSync(path.dirname(this.adminFile), { recursive: true });
+    fs.writeFileSync(this.adminFile, JSON.stringify({ salt: salt.toString('base64'), hash: hash.toString('base64'), set: Date.now() }), { mode: 0o600 });
+  }
+
+  checkAdminPassword(pw) {
+    let rec;
+    try { rec = JSON.parse(fs.readFileSync(this.adminFile, 'utf8')); } catch { return false; }
+    if (!rec.hash || !pw) return false;
+    const want = Buffer.from(rec.hash, 'base64');
+    const got = crypto.scryptSync(String(pw), Buffer.from(rec.salt, 'base64'), want.length, SCRYPT);
+    return crypto.timingSafeEqual(want, got);
   }
 
   save() {

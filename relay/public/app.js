@@ -994,7 +994,31 @@ async function showAdmin() {
   if (!me) { show('login'); return; }
   if (!me.admin) { location.hash = '#/'; return; }
   await refreshUsers();
+  refreshPwStatus();
 }
+
+async function refreshPwStatus() {
+  try {
+    const r = await adminCall('GET', '/api/admin/password');
+    $('pw-status').textContent = r.set ? '· đã đặt' : '· chưa đặt';
+  } catch { /* shown by refreshUsers */ }
+}
+
+$('pw-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('pw-msg');
+  msg.hidden = false;
+  if ($('pw-new').value !== $('pw-again').value) { msg.className = 'small error'; msg.textContent = 'Hai lần nhập không khớp.'; return; }
+  try {
+    const r = await fetch('/api/admin/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('pw-new').value }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    msg.className = 'small muted';
+    msg.textContent = 'Đã lưu. Lần sau đăng nhập bằng mật khẩu này.';
+    $('pw-new').value = $('pw-again').value = '';
+    refreshPwStatus();
+  } catch (err) { msg.className = 'small error'; msg.textContent = `Lỗi: ${err.message}`; }
+});
 
 async function refreshUsers() {
   let list;

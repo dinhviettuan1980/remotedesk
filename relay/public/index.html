@@ -18,7 +18,7 @@
     <form id="login-form" class="card">
       <h1>RemoteDesk</h1>
       <p class="muted">Nhập mã truy cập một lần — trình duyệt sẽ nhớ.</p>
-      <input id="login-token" type="password" autocomplete="current-password" placeholder="Mã truy cập" required>
+      <input id="login-token" type="password" autocomplete="current-password" placeholder="Mã truy cập (hoặc mật khẩu admin)" required>
       <button type="submit">Đăng nhập</button>
       <p id="login-error" class="error" hidden></p>
     </form>
@@ -91,6 +91,16 @@
     <p id="admin-error" class="error small" hidden></p>
     <ul id="user-list" class="users"></ul>
     <p id="user-empty" class="muted center" hidden>Chưa có người dùng nào.</p>
+    <details class="install admin-pw">
+      <summary>Mật khẩu admin <span id="pw-status" class="muted small"></span></summary>
+      <p class="muted small">Đăng nhập trang này bằng mật khẩu của bạn thay cho token admin dài (token admin vẫn dùng được). Ít nhất 10 ký tự.</p>
+      <form id="pw-form" class="user-form">
+        <input id="pw-new" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" minlength="10" required>
+        <input id="pw-again" type="password" autocomplete="new-password" placeholder="Nhập lại" minlength="10" required>
+        <button type="submit">Lưu</button>
+      </form>
+      <p id="pw-msg" class="small" hidden></p>
+    </details>
   </section>
 
   <section id="session" class="screen" hidden>

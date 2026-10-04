@@ -256,6 +256,15 @@ async function adminApi(req, res, p) {
   });
   const body = async () => { try { return JSON.parse(await readBody(req)); } catch { return {}; } };
 
+  if (p === '/api/admin/password') {
+    if (req.method === 'GET') return sendJsonRes(res, 200, { set: users.adminPasswordSet() });
+    if (req.method !== 'POST') return sendJsonRes(res, 405, { error: 'method' });
+    const pw = String((await body()).password || '');
+    if (pw.length < 10 || pw.length > 200) return sendJsonRes(res, 400, { error: 'Mật khẩu cần 10–200 ký tự' });
+    users.setAdminPassword(pw);
+    console.log('admin: password changed');
+    return sendJsonRes(res, 200, { set: true });
+  }
   if (p === '/api/admin/users' && req.method === 'GET') return sendJsonRes(res, 200, users.list().map(view));
   if (p === '/api/admin/users' && req.method === 'POST') {
     const name = cleanName((await body()).name);
@@ -299,7 +308,8 @@ const server = http.createServer(async (req, res) => {
     if (isBlocked(ip)) return send(res, 429, 'Too many attempts, try later');
     let token = '';
     try { token = (JSON.parse(await readBody(req)).token || '').trim(); } catch { /* bad body */ }
-    const t = users.byToken(token);
+    // A user's token, the admin token, or the admin password.
+    const t = users.byToken(token) || (users.checkAdminPassword(token) ? users.admin : null);
     if (!t) { noteFailure(ip); return send(res, 401, 'invalid'); }
     failures.delete(ip);
     const secure = PUBLIC_URL.startsWith('https:') ? '; Secure' : '';
