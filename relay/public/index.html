@@ -149,16 +149,44 @@
         <option value="restart-agent">Khởi động lại agent</option>
         <option value="update-agent">Cập nhật agent (Windows)</option>
       </select>
+      <button id="btn-files" title="Chuyển file">📁</button>
       <button id="btn-kb" title="Bàn phím (điện thoại)">⌨</button>
       <button id="btn-fs" title="Toàn màn hình (khoá phím hệ thống)">⛶</button>
     </div>
     <div id="stage" class="stage" tabindex="0">
       <canvas id="screen"></canvas>
       <div id="overlay" class="overlay">Đang kết nối…</div>
+      <div id="clip-toast" class="clip-toast" hidden>
+        <span id="clip-toast-text"></span>
+        <button id="clip-toast-get">Tải về</button>
+        <button id="clip-toast-close" title="Đóng">✕</button>
+      </div>
       <textarea id="vkb" class="vkb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Bàn phím"></textarea>
     </div>
+    <!-- File transfer (files.js): browse the remote machine, send / get files. -->
+    <aside id="files-panel" class="files-panel" hidden>
+      <div class="files-head">
+        <b>File trên máy kia</b>
+        <span class="spacer"></span>
+        <button id="files-refresh" title="Tải lại">⟳</button>
+        <button id="files-close" title="Đóng">✕</button>
+      </div>
+      <div id="files-roots" class="files-roots"></div>
+      <div class="files-pathbar">
+        <button id="files-up" title="Lên thư mục cha">⬆</button>
+        <span id="files-path" class="files-path small"></span>
+      </div>
+      <ul id="files-list" class="files-list"></ul>
+      <div class="files-send">
+        <button id="files-pick">⬆ Gửi file vào Downloads…</button>
+        <input id="files-input" type="file" multiple hidden>
+      </div>
+      <p class="muted small files-hint">Bấm vào file để tải về. Hoặc kéo thả file vào màn hình; hay copy file ở máy này rồi bấm vào màn hình máy kia và ⌘V / Ctrl+V để dán thẳng vào thư mục đang mở.</p>
+      <ul id="xfer-list" class="xfer-list"></ul>
+    </aside>
   </section>
 
   <script src="app.js"></script>
+  <script src="files.js"></script>
 </body>
 </html>

@@ -46,6 +46,11 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
 - Agent 0.2.1: `-import-config`, lệnh `update` (Windows: tải Agent-Setup.exe của token, chạy `/S` qua task `RemoteDesk-Update`). Máy Windows nhà đang 0.2.0 → lần đầu phải cài tại máy (UAC trên secure desktop không bấm được từ xa).
 - Cần thử trên Windows thật: giao diện cài, cài đè bản cũ (giữ id/name), gỡ qua Settings › Apps, cập nhật từ xa.
 
+## Chuyển file (agent 0.2.2, 2026-10-04, chưa deploy)
+- `agent/files.go`, `clipfiles_{windows,darwin}.go`, `relay/public/files.js`; relay định tuyến tin `f*` + nhị phân loại 2 theo vid.
+- Dán file (⌘V/Ctrl+V) → tải lên thư mục tạm → `fclip` đặt clipboard máy kia → viewer gửi phím dán. Copy file ở máy kia → toast "Tải về".
+- Đã thử local (20 MB hai chiều, checksum khớp). Chưa thử ghi clipboard thật (CF_HDROP / NSPasteboard) và Safari (có thể không bắn sự kiện paste → dán file không chạy, dán chữ vẫn chạy).
+
 ## Chưa kiểm thử trên máy thật
 - `RemoteDesk-Setup.exe` / `RemoteDesk-Agent-Setup.exe` (Windows), kể cả bước hỏi Autologon.
 - `RemoteDesk-Installer.pkg` / `RemoteDesk-Agent-Installer.pkg` (Mac); phần postinstall chạy dưới user đang đăng nhập.

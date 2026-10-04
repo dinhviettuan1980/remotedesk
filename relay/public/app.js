@@ -177,6 +177,7 @@ function stopSession() {
   clearTimeout(S.retry);
   clearInterval(S.statsTimer);
   stopP2P(null);
+  filesReset();
   try { S.ws && S.ws.close(); } catch { /* ignore */ }
   closeDecoder();
   if (S.latest) S.latest.close();
@@ -200,12 +201,14 @@ function connect() {
   ws.onmessage = (ev) => {
     if (!S || S.ws !== ws) return;
     if (typeof ev.data === 'string') onControl(JSON.parse(ev.data));
+    else if (new Uint8Array(ev.data, 0, 1)[0] === 2) onFileData(ev.data); // files.js
     else onVideo(ev.data);
   };
   ws.onclose = (ev) => {
     if (!S || S.ws !== ws || S.closed) return;
     stopP2P(null); // signaling is gone; renegotiate after reconnecting
     S.p2pFails = 0;
+    filesReset();
     closeDecoder();
     setOverlay(ev.code === 4404 ? 'Máy đang offline — đang chờ kết nối lại…' : 'Mất kết nối — đang thử lại…');
     S.retry = setTimeout(connect, 2000);
@@ -248,6 +251,9 @@ function onControl(m) {
     }
     case 'rtc':
       onRtc(m);
+      break;
+    case 'fls': case 'fmeta': case 'fack': case 'fdone': case 'ferr': case 'fclip': case 'clipfiles':
+      onFileMsg(m); // files.js
       break;
     case 'rtc-reset': // the agent reconnected: its peer connections are gone
       stopP2P(null);
@@ -793,13 +799,15 @@ function releaseAll() {
   send({ t: 'ra' });
 }
 
-window.addEventListener('keydown', (e) => {
-  if (!S || !S.control || keyTargetIsUi(e) || !e.code) return;
-  e.preventDefault();
-  const code = mapCode(e.code);
-  if (e.code === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
-  if (e.code === 'KeyV' && (e.ctrlKey || e.metaKey) && !e.repeat && navigator.clipboard && navigator.clipboard.readText) {
-    // Push our clipboard to the remote side before the paste keystroke lands.
+// ⌘V / Ctrl+V: the keydown is not cancelled, so the browser fires "paste" with
+// our clipboard. Files are uploaded and pasted on the remote side (files.js);
+// text goes to the remote clipboard before the V lands. Browsers that fire no
+// paste event here fall back to reading the clipboard.
+function pasteViaClipboardApi() {
+  const code = S.pasteKey;
+  S.pasteKey = null;
+  clearTimeout(S.pasteTimer);
+  if (navigator.clipboard && navigator.clipboard.readText) {
     S.gate = S.gate.then(async () => {
       try {
         const text = await Promise.race([navigator.clipboard.readText(), new Promise((_, rej) => setTimeout(rej, 1500))]);
@@ -809,12 +817,41 @@ window.addEventListener('keydown', (e) => {
   }
   S.pressed.add(code);
   send({ t: 'kd', c: code });
+}
+
+window.addEventListener('paste', (e) => {
+  if (!S || !S.control || !S.pasteKey) return;
+  e.preventDefault();
+  clearTimeout(S.pasteTimer);
+  const code = S.pasteKey;
+  S.pasteKey = null;
+  if (handlePasteEvent(e)) { S.swallowKeyUp = code; return; } // files.js sends the keystroke when done
+  const text = e.clipboardData && e.clipboardData.getData('text/plain');
+  if (text && text !== S.lastClip) { S.lastClip = text; send({ t: 'clip', text }); }
+  S.pressed.add(code);
+  send({ t: 'kd', c: code });
+});
+
+window.addEventListener('keydown', (e) => {
+  if (!S || !S.control || keyTargetIsUi(e) || !e.code) return;
+  const code = mapCode(e.code);
+  if (e.code === 'KeyV' && (e.ctrlKey || e.metaKey) && !e.repeat) {
+    S.pasteKey = code;
+    S.pasteTimer = setTimeout(() => { if (S && S.pasteKey) pasteViaClipboardApi(); }, 50);
+    return;
+  }
+  e.preventDefault();
+  if (e.code === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
+  S.pressed.add(code);
+  send({ t: 'kd', c: code });
 });
 
 window.addEventListener('keyup', (e) => {
   if (!S || !S.control || keyTargetIsUi(e) || !e.code) return;
   e.preventDefault();
   const code = mapCode(e.code);
+  if (S.pasteKey === code) pasteViaClipboardApi(); // released before any paste event
+  if (S.swallowKeyUp === code) { S.swallowKeyUp = null; return; }
   if (e.code === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
   S.pressed.delete(code);
   send({ t: 'ku', c: code });

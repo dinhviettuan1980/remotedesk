@@ -21,6 +21,10 @@
 //                  The relay stops/resumes its copy and tells the agent
 //                  {"t":"wsvideo","on":bool} so the agent's uplink only carries
 //                  the relay stream while someone still needs it.
+//   {"t":"f…",…}   file transfer (agent/files.go): stamped with "vid" like rtc;
+//                  agent replies carrying "to" go to that viewer only.
+// Binary type 2 = file data. Viewer → agent [2][id u32][…] is forwarded as
+// [2][vid u32][id u32][…]; agent → viewer [2][vid u32][…] goes to that viewer.
 
 const http = require('http');
 const fs = require('fs');
@@ -472,7 +476,7 @@ function onAgent(ws, url, ip, tenant) {
       const text = data.toString();
       if (text.startsWith('{"t":"info"') || text.includes('"t":"info"')) agent.lastInfo = text;
       let to = null;
-      if (text.startsWith('{"t":"rtc"')) { try { to = JSON.parse(text).to; } catch { return; } }
+      if (text.startsWith('{"t":"rtc"') || text.includes('"to":')) { try { to = JSON.parse(text).to; } catch { return; } }
       for (const v of agent.viewers) if ((to == null || v.vid === to) && v.ws.readyState === v.ws.OPEN) v.ws.send(text);
       return;
     }
@@ -485,6 +489,11 @@ function onAgent(ws, url, ip, tenant) {
         if (agent.gopBytes > GOP_CACHE_BYTES) { agent.gop = []; agent.gopBytes = 0; }
       }
       for (const v of agent.viewers) sendVideo(v, data, key);
+      return;
+    }
+    if (data[0] === 2 && data.length >= 5) { // file data for one viewer
+      const vid = data.readUInt32BE(1);
+      for (const v of agent.viewers) if (v.vid === vid && v.ws.readyState === v.ws.OPEN) v.ws.send(data, { binary: true });
       return;
     }
     for (const v of agent.viewers) if (v.ws.readyState === v.ws.OPEN) v.ws.send(data, { binary: true });
@@ -561,7 +570,7 @@ function onViewer(ws, url, ip, tenant) {
     if (!isBinary) {
       const text = data.toString();
       if (text === '{"t":"kf"}' && a.gop.length) { replayGop(a, viewer); return; } // decoder reset: serve from cache
-      if (text.startsWith('{"t":"rtc"')) {
+      if (text.startsWith('{"t":"rtc"') || text.startsWith('{"t":"f')) {
         let m;
         try { m = JSON.parse(text); } catch { return; }
         m.vid = viewer.vid;
@@ -585,6 +594,12 @@ function onViewer(ws, url, ip, tenant) {
       if (text.startsWith('{"t":"cfg"')) {
         try { const m = JSON.parse(text); a.params = { fps: m.fps, maxw: m.maxw, kbps: m.kbps }; } catch { /* ignore */ }
       }
+    }
+    if (isBinary && data[0] === 2) { // file data: tell the agent whose it is
+      if (data.length < 5) return;
+      const vid = Buffer.alloc(4);
+      vid.writeUInt32BE(viewer.vid);
+      data = Buffer.concat([data.subarray(0, 1), vid, data.subarray(1)]);
     }
     if (a.ws.readyState === a.ws.OPEN) a.ws.send(data, { binary: isBinary });
   });

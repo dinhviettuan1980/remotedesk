@@ -40,6 +40,7 @@ type Agent struct {
 	lastKf   time.Time // last ffmpeg (re)start
 	lastKey  time.Time // last keyframe out of the encoder
 	peers    map[int]*peer
+	files    fileXfer
 	t0       time.Time
 	clip     *clipSync
 	awake    func() // stops keep-awake
@@ -135,6 +136,8 @@ func (a *Agent) runOnce() error {
 		_ = ws.SetReadDeadline(time.Now().Add(60 * time.Second))
 		if kind == websocket.TextMessage {
 			a.handle(data)
+		} else if len(data) > 0 && data[0] == 2 {
+			a.onFileChunk(data)
 		}
 	}
 }
@@ -210,6 +213,15 @@ type inMsg struct {
 	SDP  *webrtc.SessionDescription `json:"sdp"`
 	Cand json.RawMessage            `json:"cand"`
 	On   bool                       `json:"on"`
+	// file transfer (files.go)
+	ID    int      `json:"id"`
+	Path  string   `json:"path"`
+	Name  string   `json:"name"`
+	Size  int64    `json:"size"`
+	Got   int64    `json:"got"`
+	Clip  bool     `json:"clip"`
+	Batch string   `json:"batch"`
+	Paths []string `json:"paths"`
 }
 
 // handleInput is the entry point for the P2P data channel: input only, no
@@ -286,6 +298,9 @@ func (a *Agent) handle(data []byte) {
 		a.onRTC(m.Vid, m.SDP, m.Cand)
 	case "rtc-bye":
 		a.closePeer(m.Vid)
+		a.closeFiles(m.Vid)
+	case "fls", "fput", "fend", "fget", "fack", "fcancel", "fclip":
+		a.onFile(&m)
 	case "update":
 		go func() {
 			log.Printf("update requested by viewer")
@@ -332,7 +347,9 @@ func (a *Agent) join(sp StreamParams) {
 		a.awake = keepAwake()
 	}
 	if a.clip == nil {
-		a.clip = startClipSync(func(text string) { a.sendJSON(map[string]string{"t": "clip", "text": text}) })
+		a.clip = startClipSync(
+			func(text string) { a.sendJSON(map[string]string{"t": "clip", "text": text}) },
+			func(paths []string) { a.sendJSON(map[string]any{"t": "clipfiles", "files": describeFiles(paths)}) })
 	}
 	a.mu.Unlock()
 	a.input.Wake()
@@ -389,6 +406,7 @@ func (a *Agent) leave() {
 		s.Stop()
 	}
 	a.closeAllPeers()
+	a.closeFiles(-1)
 	if stopAwake != nil {
 		stopAwake()
 	}
@@ -407,15 +425,20 @@ func (a *Agent) leave() {
 
 // clipSync polls the local clipboard while a viewer is attached and pushes
 // changes to it; text from the viewer is written locally without echoing back.
+// Copied files are announced too (the viewer offers to download them).
 type clipSync struct {
-	mu   sync.Mutex
-	last string
-	quit chan struct{}
+	mu        sync.Mutex
+	last      string
+	lastFiles string
+	quit      chan struct{}
 }
 
-func startClipSync(push func(string)) *clipSync {
+func startClipSync(push func(string), pushFiles func([]string)) *clipSync {
 	c := &clipSync{quit: make(chan struct{})}
 	c.last, _ = clipboardRead()
+	if fs, _ := clipboardReadFiles(); len(fs) > 0 {
+		c.lastFiles = strings.Join(fs, "\n")
+	}
 	go func() {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
@@ -424,6 +447,16 @@ func startClipSync(push func(string)) *clipSync {
 			case <-c.quit:
 				return
 			case <-t.C:
+				if fs, err := clipboardReadFiles(); err == nil {
+					key := strings.Join(fs, "\n")
+					c.mu.Lock()
+					changed := key != c.lastFiles
+					c.lastFiles = key
+					c.mu.Unlock()
+					if changed && len(fs) > 0 {
+						pushFiles(fs)
+					}
+				}
 				text, err := clipboardRead()
 				if err != nil || text == "" || len(text) > 1<<20 {
 					continue
@@ -448,6 +481,13 @@ func (c *clipSync) setRemote(text string) {
 	if err := clipboardWrite(text); err != nil {
 		log.Printf("clipboard write: %v", err)
 	}
+}
+
+// noteFiles: files the viewer is pasting here — not "copied on this machine".
+func (c *clipSync) noteFiles(paths []string) {
+	c.mu.Lock()
+	c.lastFiles = strings.Join(paths, "\n")
+	c.mu.Unlock()
 }
 
 func (c *clipSync) stop() { close(c.quit) }

@@ -23,6 +23,7 @@
   - Phím được gửi theo vị trí vật lý (`KeyboardEvent.code`), nên Telex/Unikey ở máy kia gõ tiếng Việt bình thường.
   - Có tuỳ chọn đổi ⌘ ⇄ Ctrl khi điều khiển khác hệ điều hành.
   - Clipboard đồng bộ hai chiều.
+  - Chuyển file hai chiều: copy file rồi ⌘V/Ctrl+V vào màn hình máy kia; kéo thả; nút 📁 để duyệt và tải file của máy kia (agent 0.2.2+).
 
 ## Bảo mật
 
