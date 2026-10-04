@@ -50,8 +50,8 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
 
 ## Vấn đề đã biết / việc nên làm tiếp
 1. **Windows thỉnh thoảng rớt kết nối** (WebSocket 1006, khoảng 2 lần / 12 giờ, tự nối lại sau 20–30 giây). Cần đọc `C:\ProgramData\RemoteDesk\agent.log` và Event Log về nguồn/mạng (Modern Standby, card mạng tiết kiệm điện, Wi-Fi). Chủ repo đã có prompt chẩn đoán để chạy trên máy đó.
-2. ~~Mac gửi 60 fps dù đặt 30~~: đã thêm filter `fps=N` (agent/session.go). **Chưa deploy** (cần cập nhật agent).
-3. **P2P (WebRTC) đã code xong, chưa deploy** (2026-10-04). Pion trên agent (`agent/p2p.go`), WebRTC trong viewer (`relay/public/app.js`), relay làm signaling + dự phòng. Đã thử end-to-end trên máy local (relay + agent với luồng giả lập + Chrome headless): chuyển sang P2P sau ~4 s, quay về relay ~1 s, viewer WS vào giữa chừng có hình sau ~0,5 s. **Thứ tự deploy**: relay trước (tương thích agent 0.1.0), rồi cài lại agent trên Mac (phải cấp lại quyền) và Windows (bộ cài thêm luật tường lửa UDP). Chưa thử giữa hai mạng thật, chưa thử iPhone. Chi tiết: `docs/RemoteDesk-TaiLieuKyThuat.pdf`.
+2. ~~Mac gửi 60 fps dù đặt 30~~: đã thêm filter `fps=N` (agent/session.go), deploy cùng agent 0.2.0.
+3. **P2P (WebRTC) đã deploy** (2026-10-04): relay mới + agent 0.2.0 trên cả Mac và Windows. Chạy được khi hai máy cùng mạng (`P2P LAN`). **Mac công ty ⇄ Windows nhà vẫn đi relay**: mạng công ty là NAT đối xứng (STUN thấy cổng công khai khác nhau cho mỗi đích: Google 45206, Cloudflare 29554), nên không đục lỗ UDP được. Muốn cải thiện trường hợp này: TURN (coturn) trên VPS, chỉ đổi TCP → UDP, vẫn đi vòng qua VPS. Chi tiết: `docs/RemoteDesk-TaiLieuKyThuat.pdf`.
 4. Chưa có: nhiều màn hình, âm thanh, truyền file. Windows chưa điều khiển được màn hình khoá, UAC hay Ctrl+Alt+Del khi chưa đăng nhập; đang dùng tự đăng nhập (Autologon) để agent chạy sau khi khởi động lại.
 5. VPS: RAM khoảng 2 GB, ổ đĩa đã đầy khoảng 91%; relay dùng khoảng 50 MB.
 
