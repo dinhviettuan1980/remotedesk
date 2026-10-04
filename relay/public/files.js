@@ -285,7 +285,7 @@ function fetchCopied(files, quiet) {
 function setCopied(files) {
   X.copied = files;
   const b = $('btn-getclip');
-  b.hidden = files.length === 0;
+  $('getclip').hidden = files.length === 0;
   b.textContent = files.length > 1 ? `📥 ${files.length}` : '📥';
   const bytes = files.reduce((n, f) => n + (f.size || 0), 0);
   b.title = files.length ? `Tải về máy này: ${files.map((f) => f.name).join(', ')} (${fmtSize(bytes)})` : '';
@@ -369,6 +369,7 @@ function showFilesPanel() {
 }
 
 $('btn-getclip').onclick = () => { getCopied(); $('stage').focus(); };
+$('btn-getclip-x').onclick = () => { setCopied([]); $('clip-toast').hidden = true; $('stage').focus(); };
 
 $('btn-files').onclick = () => {
   const p = $('files-panel');

@@ -142,3 +142,6 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .clip-toast span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: 14px; }
 .clip-toast button { flex: none; padding: 4px 10px; font-size: 13px; }
 #clip-toast-get { background: var(--accent); border-color: var(--accent); color: #fff; }
+.getclip { display: inline-flex; }
+.getclip #btn-getclip { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none; }
+.getclip #btn-getclip-x { border-top-left-radius: 0; border-bottom-left-radius: 0; padding-left: 7px; padding-right: 7px; color: var(--muted); }
