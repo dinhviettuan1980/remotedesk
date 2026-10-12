@@ -1,0 +1,58 @@
+# XcodeGen spec for the iPhone/iPad viewer: ./build.sh generates, builds and installs.
+# The generated .xcodeproj is not committed.
+name: RemoteDesk
+options:
+  bundleIdPrefix: vn.tuandv
+  deploymentTarget:
+    iOS: '16.4'
+  developmentLanguage: vi
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    MARKETING_VERSION: '0.1'
+    CURRENT_PROJECT_VERSION: '1'
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: GXSFH7K2X5
+    # Page the app opens; build.sh overrides it to try an unreleased viewer.
+    RD_SERVER: https://remote.tuandv.id.vn/
+targets:
+  RemoteDesk:
+    type: application
+    platform: iOS
+    sources:
+      - path: RemoteDesk
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: vn.tuandv.remotedesk.ios
+        PRODUCT_NAME: RemoteDesk
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: '1,2'
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: RemoteDesk/Info.plist
+      properties:
+        CFBundleDisplayName: RemoteDesk
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        RDServer: $(RD_SERVER)
+        UILaunchScreen:
+          UIColorName: ''
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: true
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
