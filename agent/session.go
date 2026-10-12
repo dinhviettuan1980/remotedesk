@@ -157,48 +157,86 @@ var (
 type frameSink func(au []byte, key bool)
 
 // startSession tries each pipeline until one produces a frame. onReady is
-// called with the pipeline that works, onFail if none does.
+// called with the pipeline that works, onFail when capture is down.
+//
+// Capture going away is often temporary (Windows: UAC prompt, lock screen,
+// display off or mode change → DXGI_ERROR_ACCESS_LOST), so the session keeps
+// retrying until it is stopped; onFail fires once per outage.
 func startSession(ff string, cfg *Config, sp StreamParams, sink frameSink, onReady func(pipeline), onFail func(error)) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(s.done)
-		if err := capturePreflight(); err != nil {
-			onFail(err)
-			return
-		}
-		pipes := platformPipelines(ff, cfg, usableEncoders(ff, cfg), sp)
-		lastGoodMu.Lock()
-		lg := lastGood
-		lastGoodMu.Unlock()
-		for i, p := range pipes {
-			if p.String() == lg && i > 0 {
-				pipes[0], pipes[i] = pipes[i], pipes[0]
-			}
-		}
-		var errs []string
-		for _, p := range pipes {
+		outage := false
+		wait := time.Second
+		for {
+			started, err := tryPipelines(ctx, ff, cfg, sp, sink, onReady, !outage)
 			if ctx.Err() != nil {
 				return
 			}
-			started, err := runPipeline(ctx, ff, p, sp, sink, func() {
-				lastGoodMu.Lock()
-				lastGood = p.String()
-				lastGoodMu.Unlock()
-				onReady(p)
-			})
-			if started || ctx.Err() != nil {
-				if err != nil && ctx.Err() == nil {
-					onFail(fmt.Errorf("%s stopped: %v", p, err))
-				}
-				return
+			if started { // was streaming, then stopped: a new outage
+				outage = false
+				wait = time.Second
 			}
-			log.Printf("pipeline %s failed: %v", p, err)
-			errs = append(errs, fmt.Sprintf("%s: %v", p, err))
+			if !outage {
+				onFail(err)
+				outage = true
+			}
+			log.Printf("capture down, retrying in %s", wait)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+			if wait *= 2; wait > 10*time.Second {
+				wait = 10 * time.Second
+			}
 		}
-		onFail(errors.New(strings.Join(errs, "\n")))
 	}()
 	return s
+}
+
+// tryPipelines runs the first pipeline that works until it stops. started
+// reports whether it produced frames; logFails logs each pipeline that fails.
+func tryPipelines(ctx context.Context, ff string, cfg *Config, sp StreamParams, sink frameSink, onReady func(pipeline), logFails bool) (bool, error) {
+	if err := capturePreflight(); err != nil {
+		return false, err
+	}
+	pipes := platformPipelines(ff, cfg, usableEncoders(ff, cfg), sp)
+	lastGoodMu.Lock()
+	lg := lastGood
+	lastGoodMu.Unlock()
+	for i, p := range pipes {
+		if p.String() == lg && i > 0 {
+			pipes[0], pipes[i] = pipes[i], pipes[0]
+		}
+	}
+	var errs []string
+	for _, p := range pipes {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		started, err := runPipeline(ctx, ff, p, sp, sink, func() {
+			lastGoodMu.Lock()
+			lastGood = p.String()
+			lastGoodMu.Unlock()
+			onReady(p)
+		})
+		if started {
+			if err == nil {
+				err = errors.New("ffmpeg exited")
+			}
+			return true, fmt.Errorf("%s stopped: %v", p, err)
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if logFails {
+			log.Printf("pipeline %s failed: %v", p, err)
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", p, err))
+	}
+	return false, errors.New(strings.Join(errs, "\n"))
 }
 
 func (s *Session) Stop() {

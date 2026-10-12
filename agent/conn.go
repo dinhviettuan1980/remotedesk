@@ -417,7 +417,7 @@ func (a *Agent) restart(sp StreamParams) {
 		},
 		func(err error) {
 			log.Printf("capture failed: %v", err)
-			a.sendJSON(map[string]string{"t": "error", "msg": "Không chụp được màn hình:\n" + err.Error() + "\n" + captureHint()})
+			a.sendJSON(map[string]string{"t": "error", "msg": "Không chụp được màn hình — đang tự thử lại…\n" + err.Error() + "\n" + captureHint()})
 		})
 	a.mu.Lock()
 	if a.viewer && a.sess == nil {
