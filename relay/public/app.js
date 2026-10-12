@@ -975,7 +975,7 @@ vkb.addEventListener('keydown', (e) => { if (e.key !== 'Unidentified' && e.key !
 
 $('btn-kb').onclick = () => {
   if (!S || !S.control) { nudgeMode(); return; }
-  if (document.activeElement === vkb) { vkb.blur(); stage.focus(); } else vkb.focus();
+  if (keyboardShown()) { vkb.blur(); stage.focus(); } else { vkb.blur(); vkb.focus(); }
 };
 
 // Key row above the phone keyboard. A modifier tap arms it for the next key;
@@ -1091,11 +1091,29 @@ function onEdit(m) {
   if (!m.click) return;
   clearTimeout(kbOfferTimer);
   if (!m.on) { offer.hidden = true; return; }
-  if (window.rdNative && window.rdNative.autoKeyboard) { vkb.focus(); return; }
-  offer.hidden = false;
-  kbOfferTimer = setTimeout(() => { offer.hidden = true; }, 6000);
+  if (window.rdNative && window.rdNative.autoKeyboard) {
+    vkb.focus();
+    // iOS may still refuse a keyboard that no tap asked for: then offer the button.
+    setTimeout(() => { if (!keyboardShown()) showKbOffer(); }, 700);
+    return;
+  }
+  showKbOffer();
 }
-$('kb-offer').onclick = () => { $('kb-offer').hidden = true; vkb.focus(); };
+
+// The on-screen keyboard is up when the visual viewport lost a keyboard's height.
+function keyboardShown() {
+  const vv = window.visualViewport;
+  return document.activeElement === vkb && !!vv && vv.height < window.innerHeight - 120;
+}
+
+function showKbOffer() {
+  clearTimeout(kbOfferTimer);
+  $('kb-offer').hidden = false;
+  kbOfferTimer = setTimeout(() => { $('kb-offer').hidden = true; }, 6000);
+}
+
+// Blur first: focus() on an already focused field does not bring the keyboard back.
+$('kb-offer').onclick = () => { $('kb-offer').hidden = true; vkb.blur(); vkb.focus(); };
 if (window.visualViewport) {
   visualViewport.addEventListener('resize', fitToKeyboard);
   visualViewport.addEventListener('scroll', fitToKeyboard);
