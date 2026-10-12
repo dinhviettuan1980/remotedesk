@@ -44,6 +44,10 @@ type Agent struct {
 	t0       time.Time
 	clip     *clipSync
 	awake    func() // stops keep-awake
+
+	editMu    sync.Mutex // text-field check after clicks / keys (checkEdit)
+	editTimer *time.Timer
+	editClick bool
 }
 
 func newAgent(cfg *Config, ff string) *Agent {
@@ -244,12 +248,16 @@ func (a *Agent) input1(m *inMsg) bool {
 		a.input.MouseButton(m.B, true)
 	case "mu":
 		a.input.MouseButton(m.B, false)
+		if m.B == 0 {
+			a.scheduleEditCheck(true)
+		}
 	case "wh":
 		a.input.Wheel(m.DX, m.DY)
 	case "kd":
 		a.input.Key(m.C, true)
 	case "ku":
 		a.input.Key(m.C, false)
+		a.scheduleEditCheck(false)
 	case "ra":
 		a.input.ReleaseAll()
 	case "clip":
@@ -263,6 +271,37 @@ func (a *Agent) input1(m *inMsg) bool {
 		return false
 	}
 	return true
+}
+
+// Phone viewers open their keyboard when a click lands in a text field, and
+// keep the caret in view while typing: after a left click (and after typing
+// pauses) tell the viewers whether the focus is a text field and where.
+func (a *Agent) scheduleEditCheck(click bool) {
+	a.editMu.Lock()
+	defer a.editMu.Unlock()
+	if click {
+		a.editClick = true
+	}
+	if a.editTimer != nil {
+		a.editTimer.Stop()
+	}
+	a.editTimer = time.AfterFunc(150*time.Millisecond, a.checkEdit)
+}
+
+func (a *Agent) checkEdit() {
+	a.editMu.Lock()
+	click := a.editClick
+	a.editClick = false
+	a.editMu.Unlock()
+	edit, x, y, pos := a.input.FocusedEdit()
+	if !click && !(edit && pos) {
+		return // typing: only caret moves are news
+	}
+	msg := map[string]any{"t": "edit", "on": edit, "click": click}
+	if pos {
+		msg["x"], msg["y"] = x, y
+	}
+	a.sendJSON(msg)
 }
 
 func (a *Agent) handle(data []byte) {

@@ -29,6 +29,88 @@ static void rd_scroll(int dy, int dx) {
 	CFRelease(e);
 }
 
+// rd_focus_edit: 0 = focus is not a text field, 1 = it is and *x,*y hold the
+// caret (global coordinates), 2 = it is but the caret position is unknown.
+static pid_t rd_front_pid(void) {
+	pid_t pid = 0;
+	CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+	if (!list) return 0;
+	for (CFIndex i = 0; i < CFArrayGetCount(list) && !pid; i++) {
+		CFDictionaryRef w = CFArrayGetValueAtIndex(list, i);
+		int layer = -1;
+		CFNumberRef n = CFDictionaryGetValue(w, kCGWindowLayer);
+		if (n) CFNumberGetValue(n, kCFNumberIntType, &layer);
+		if (layer != 0) continue; // menu bar, Dock, overlays
+		CFNumberRef p = CFDictionaryGetValue(w, kCGWindowOwnerPID);
+		if (p) CFNumberGetValue(p, kCFNumberIntType, &pid);
+	}
+	CFRelease(list);
+	return pid;
+}
+
+static int rd_focus_edit(double *x, double *y) {
+	AXUIElementRef sys = AXUIElementCreateSystemWide();
+	AXUIElementSetMessagingTimeout(sys, 0.3); // a hung app must not stall the agent
+	AXUIElementRef el = NULL;
+	int edit = 0;
+	// The system-wide element often answers kAXErrorCannotComplete; asking the
+	// app that owns the front window works.
+	if (AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute, (CFTypeRef *)&el) != kAXErrorSuccess || !el) {
+		el = NULL;
+		pid_t pid = rd_front_pid();
+		if (pid > 0) {
+			AXUIElementRef app = AXUIElementCreateApplication(pid);
+			AXUIElementSetMessagingTimeout(app, 0.3);
+			if (AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, (CFTypeRef *)&el) != kAXErrorSuccess) el = NULL;
+			CFRelease(app);
+		}
+	}
+	if (el) {
+		CFTypeRef role = NULL;
+		if (AXUIElementCopyAttributeValue(el, kAXRoleAttribute, &role) == kAXErrorSuccess && role) {
+			edit = CFEqual(role, kAXTextFieldRole) || CFEqual(role, kAXTextAreaRole) ||
+				CFEqual(role, kAXComboBoxRole) || CFEqual(role, CFSTR("AXSearchField"));
+			CFRelease(role);
+		}
+		if (!edit) { // contenteditable in web pages
+			CFTypeRef ed = NULL;
+			if (AXUIElementCopyAttributeValue(el, CFSTR("AXEditable"), &ed) == kAXErrorSuccess && ed) {
+				edit = CFGetTypeID(ed) == CFBooleanGetTypeID() && CFBooleanGetValue(ed);
+				CFRelease(ed);
+			}
+		}
+		if (edit) {
+			int got = 0;
+			CFTypeRef range = NULL, b = NULL;
+			if (AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute, &range) == kAXErrorSuccess && range) {
+				if (AXUIElementCopyParameterizedAttributeValue(el, kAXBoundsForRangeParameterizedAttribute, range, &b) == kAXErrorSuccess && b) {
+					CGRect r;
+					if (AXValueGetValue(b, kAXValueCGRectType, &r) && r.size.height > 0) {
+						*x = r.origin.x; *y = r.origin.y + r.size.height / 2; got = 1;
+					}
+					CFRelease(b);
+				}
+				CFRelease(range);
+			}
+			if (!got) { // the field itself: its left edge, first line
+				CFTypeRef p = NULL, s = NULL;
+				CGPoint pt; CGSize sz;
+				if (AXUIElementCopyAttributeValue(el, kAXPositionAttribute, &p) == kAXErrorSuccess && p &&
+					AXUIElementCopyAttributeValue(el, kAXSizeAttribute, &s) == kAXErrorSuccess && s &&
+					AXValueGetValue(p, kAXValueCGPointType, &pt) && AXValueGetValue(s, kAXValueCGSizeType, &sz)) {
+					*x = pt.x + 8; *y = pt.y + (sz.height > 60 ? 20 : sz.height / 2); got = 1;
+				}
+				if (p) CFRelease(p);
+				if (s) CFRelease(s);
+			}
+			if (!got) edit = 2;
+		}
+		CFRelease(el);
+	}
+	CFRelease(sys);
+	return edit;
+}
+
 static void rd_display_bounds(int idx, double *x, double *y, double *w, double *h) {
 	CGDirectDisplayID ids[16];
 	uint32_t n = 0;
@@ -219,6 +301,24 @@ func (m *macInjector) ReleaseAll() {
 func (m *macInjector) Wake() {
 	// -u declares user activity, which turns the display on.
 	go func() { _ = exec.Command("caffeinate", "-u", "-t", "2").Run() }()
+}
+
+func (m *macInjector) FocusedEdit() (bool, float64, float64, bool) {
+	var x, y C.double
+	switch C.rd_focus_edit(&x, &y) {
+	case 0:
+		return false, 0, 0, false
+	case 2:
+		return true, 0, 0, false
+	}
+	var bx, by, bw, bh C.double
+	C.rd_display_bounds(C.int(m.display), &bx, &by, &bw, &bh)
+	nx := (float64(x) - float64(bx)) / float64(bw)
+	ny := (float64(y) - float64(by)) / float64(bh)
+	if bw <= 0 || bh <= 0 || nx < 0 || nx > 1 || ny < 0 || ny > 1 {
+		return true, 0, 0, false // caret on another display
+	}
+	return true, nx, ny, true
 }
 
 func boolInt(b bool) C.int {

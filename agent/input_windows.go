@@ -7,8 +7,12 @@ import (
 )
 
 var (
-	user32        = syscall.NewLazyDLL("user32.dll")
-	procSendInput = user32.NewProc("SendInput")
+	user32               = syscall.NewLazyDLL("user32.dll")
+	procSendInput        = user32.NewProc("SendInput")
+	procGetGUIThreadInfo = user32.NewProc("GetGUIThreadInfo")
+	procClientToScreen   = user32.NewProc("ClientToScreen")
+	procGetCursorInfo    = user32.NewProc("GetCursorInfo")
+	procLoadCursorW      = user32.NewProc("LoadCursorW")
 )
 
 const (
@@ -175,6 +179,54 @@ func (w *winInjector) ReleaseAll() {
 
 func (w *winInjector) Wake() {
 	sendMouse(mouseInput{flags: mouseMove}) // zero relative move = user activity
+}
+
+type winRect struct{ left, top, right, bottom int32 }
+type winPoint struct{ x, y int32 }
+
+type guiThreadInfo struct {
+	cbSize, flags                                                              uint32
+	hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret uintptr
+	rcCaret                                                                    winRect
+}
+
+type cursorInfo struct {
+	cbSize, flags uint32
+	hCursor       uintptr
+	pt            winPoint
+}
+
+// FocusedEdit: the foreground thread's caret (classic and most native text
+// fields), else an I-beam mouse pointer right after the click (browsers,
+// Electron) counts as a text field under the pointer.
+func (w *winInjector) FocusedEdit() (bool, float64, float64, bool) {
+	sw, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN: primary monitor, what is captured
+	sh, _, _ := procGetSystemMetrics.Call(1)
+	norm := func(p winPoint) (float64, float64, bool) {
+		if sw == 0 || sh == 0 {
+			return 0, 0, false
+		}
+		nx, ny := float64(p.x)/float64(sw), float64(p.y)/float64(sh)
+		return nx, ny, nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1
+	}
+	gti := guiThreadInfo{}
+	gti.cbSize = uint32(unsafe.Sizeof(gti))
+	if r, _, _ := procGetGUIThreadInfo.Call(0, uintptr(unsafe.Pointer(&gti))); r != 0 && gti.hwndCaret != 0 {
+		p := winPoint{gti.rcCaret.left, (gti.rcCaret.top + gti.rcCaret.bottom) / 2}
+		procClientToScreen.Call(gti.hwndCaret, uintptr(unsafe.Pointer(&p)))
+		nx, ny, ok := norm(p)
+		return true, nx, ny, ok
+	}
+	ci := cursorInfo{}
+	ci.cbSize = uint32(unsafe.Sizeof(ci))
+	if r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r != 0 {
+		ibeam, _, _ := procLoadCursorW.Call(0, 32513) // IDC_IBEAM
+		if ibeam != 0 && ci.hCursor == ibeam {
+			nx, ny, ok := norm(ci.pt)
+			return true, nx, ny, ok
+		}
+	}
+	return false, 0, 0, false
 }
 
 func pick(c bool, a, b uint32) uint32 {

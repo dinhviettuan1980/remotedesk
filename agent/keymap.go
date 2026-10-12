@@ -11,6 +11,9 @@ type Injector interface {
 	Key(code string, down bool)
 	ReleaseAll()
 	Wake() // nudge the display awake
+	// FocusedEdit: is the keyboard focus in a text field, and where is its caret
+	// (normalized over the captured display; pos false when unknown).
+	FocusedEdit() (edit bool, x, y float64, pos bool)
 }
 
 // macKeycodes: KeyboardEvent.code → macOS virtual keycode (kVK_*).
