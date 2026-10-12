@@ -106,7 +106,8 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 
-Write-Host '==> Tắt chế độ ngủ khi cắm điện (máy ngủ thì không điều khiển từ xa được)'
+Write-Host '==> Giữ máy thức khi cắm điện (màn hình tắt / máy ngủ thì không điều khiển từ xa được)'
+powercfg /change monitor-timeout-ac 0
 powercfg /change standby-timeout-ac 0
 powercfg /change hibernate-timeout-ac 0
 
