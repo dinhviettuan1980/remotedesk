@@ -18,7 +18,10 @@
     <form id="login-form" class="card">
       <h1>RemoteDesk</h1>
       <p class="muted">Nhập mã truy cập một lần — trình duyệt sẽ nhớ.</p>
-      <input id="login-token" type="password" autocomplete="current-password" placeholder="Mã truy cập (hoặc mật khẩu admin)" required>
+      <div class="pw-field">
+        <input id="login-token" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Mã truy cập (hoặc mật khẩu admin)" required>
+        <button id="login-eye" type="button" class="pw-eye" title="Hiện mã" aria-label="Hiện mã">👁</button>
+      </div>
       <button type="submit">Đăng nhập</button>
       <p id="login-error" class="error" hidden></p>
     </form>
@@ -110,50 +113,62 @@
       <span id="sess-name" class="name"></span>
       <span id="sess-stats" class="stats"></span>
       <span class="spacer"></span>
-      <select id="sel-quality" title="Chất lượng">
-        <option value="eco">Tiết kiệm · 720p</option>
-        <option value="balanced">Cân bằng · 1080p</option>
-        <option value="sharp">Nét · 1080p 60fps</option>
-        <option value="max">Tối đa · gốc</option>
-      </select>
-      <select id="sel-zoom" title="Zoom">
-        <option value="fit">🔍 Vừa khung</option>
-        <option value="width">🔍 Vừa chiều ngang</option>
-        <option value="1">🔍 100%</option>
-        <option value="1.25">🔍 125%</option>
-        <option value="1.5">🔍 150%</option>
-        <option value="2">🔍 200%</option>
-      </select>
-      <label class="chk" title="Kết nối trực tiếp (WebRTC) khi mạng cho phép: mượt và ít trễ hơn. Không được thì tự dùng relay."><input id="chk-p2p" type="checkbox"> P2P</label>
-      <label class="chk" title="Đổi Cmd ⇄ Ctrl (Mac ⇄ Windows)"><input id="chk-swap" type="checkbox"> ⌘⇄Ctrl</label>
-      <select id="sel-keys" title="Gửi tổ hợp phím">
-        <option value="">Phím…</option>
-        <option value="meta">Win / ⌘</option>
-        <option value="alt-tab">Alt+Tab</option>
-        <option value="cmd-tab">⌘+Tab</option>
-        <option value="cmd-space">⌘+Space</option>
-        <option value="win-d">Win+D</option>
-        <option value="ctrl-shift-esc">Ctrl+Shift+Esc</option>
-        <option value="esc">Esc</option>
-        <option value="tab">Tab</option>
-        <option value="enter">Enter</option>
-        <option value="del">Delete</option>
-        <option value="left">←</option>
-        <option value="right">→</option>
-        <option value="up">↑</option>
-        <option value="down">↓</option>
-        <option value="ctrl-c">Ctrl+C</option>
-        <option value="ctrl-v">Ctrl+V</option>
-        <option value="cmd-c">⌘+C</option>
-        <option value="cmd-v">⌘+V</option>
-        <option value="restart-agent">Khởi động lại agent</option>
-        <option value="update-agent">Cập nhật agent</option>
-      </select>
+      <!-- Inline on wide screens; the ⋯ menu on phones (style.css, .tb-extra). -->
+      <div id="tb-extra" class="tb-extra">
+        <div id="menu-stats" class="menu-stats small"></div>
+        <select id="sel-quality" title="Chất lượng">
+          <option value="eco">Tiết kiệm · 720p</option>
+          <option value="balanced">Cân bằng · 1080p</option>
+          <option value="sharp">Nét · 1080p 60fps</option>
+          <option value="max">Tối đa · gốc</option>
+        </select>
+        <select id="sel-zoom" title="Zoom">
+          <option value="fit">🔍 Vừa khung</option>
+          <option value="width">🔍 Vừa chiều ngang</option>
+          <option value="1">🔍 100%</option>
+          <option value="1.25">🔍 125%</option>
+          <option value="1.5">🔍 150%</option>
+          <option value="2">🔍 200%</option>
+          <option id="zoom-custom" value="custom" hidden></option>
+        </select>
+        <select id="sel-touch" title="Cách dùng cảm ứng" hidden>
+          <option value="trackpad">☝ Touchpad</option>
+          <option value="direct">☝ Chạm trực tiếp</option>
+        </select>
+        <label class="chk" title="Kết nối trực tiếp (WebRTC) khi mạng cho phép: mượt và ít trễ hơn. Không được thì tự dùng relay."><input id="chk-p2p" type="checkbox"> P2P</label>
+        <label class="chk" title="Đổi Cmd ⇄ Ctrl (Mac ⇄ Windows)"><input id="chk-swap" type="checkbox"> ⌘⇄Ctrl</label>
+        <select id="sel-keys" title="Gửi tổ hợp phím">
+          <option value="">Phím…</option>
+          <option value="meta">Win / ⌘</option>
+          <option value="alt-tab">Alt+Tab</option>
+          <option value="cmd-tab">⌘+Tab</option>
+          <option value="cmd-space">⌘+Space</option>
+          <option value="win-d">Win+D</option>
+          <option value="ctrl-shift-esc">Ctrl+Shift+Esc</option>
+          <option value="esc">Esc</option>
+          <option value="tab">Tab</option>
+          <option value="enter">Enter</option>
+          <option value="del">Delete</option>
+          <option value="left">←</option>
+          <option value="right">→</option>
+          <option value="up">↑</option>
+          <option value="down">↓</option>
+          <option value="ctrl-c">Ctrl+C</option>
+          <option value="ctrl-v">Ctrl+V</option>
+          <option value="cmd-c">⌘+C</option>
+          <option value="cmd-v">⌘+V</option>
+          <option value="restart-agent">Khởi động lại agent</option>
+          <option value="update-agent">Cập nhật agent</option>
+        </select>
+        <button id="btn-files" title="Chuyển file">📁<span class="menu-label"> Chuyển file</span></button>
+        <button id="btn-fs" title="Toàn màn hình (khoá phím hệ thống)">⛶<span class="menu-label"> Toàn màn hình</span></button>
+        <button id="btn-help" class="menu-only" title="Cách dùng cảm ứng">❔ Cử chỉ cảm ứng</button>
+      </div>
       <span id="getclip" class="getclip" hidden><button id="btn-getclip">📥</button><button id="btn-getclip-x" title="Bỏ qua, không lấy về">✕</button></span>
-      <button id="btn-files" title="Chuyển file">📁</button>
       <button id="btn-kb" title="Bàn phím (điện thoại)">⌨</button>
-      <button id="btn-fs" title="Toàn màn hình (khoá phím hệ thống)">⛶</button>
+      <button id="btn-more" title="Thêm">⋯</button>
     </div>
+    <button id="tb-handle" class="tb-handle" title="Hiện thanh công cụ" hidden>▾</button>
     <div id="stage" class="stage" tabindex="0">
       <canvas id="screen"></canvas>
       <div id="overlay" class="overlay">Đang kết nối…</div>
@@ -162,7 +177,29 @@
         <button id="clip-toast-get">Tải về</button>
         <button id="clip-toast-close" title="Đóng">✕</button>
       </div>
+      <div id="touch-hint" class="touch-hint" hidden>
+        <b>Cử chỉ cảm ứng</b>
+        <div id="touch-hint-body"></div>
+        <button id="touch-hint-ok">Đã hiểu</button>
+      </div>
       <textarea id="vkb" class="vkb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Bàn phím"></textarea>
+    </div>
+    <div id="tp-cursor" class="tp-cursor" hidden></div>
+    <button id="kb-offer" class="kb-offer" hidden>⌨ Gõ phím</button>
+    <!-- Extra keys above the phone keyboard; Ctrl/Alt/⌘/Shift are sticky. -->
+    <div id="keyrow" class="keyrow" hidden>
+      <button data-k="Escape">Esc</button>
+      <button data-k="Tab">Tab</button>
+      <button data-mod="ControlLeft">Ctrl</button>
+      <button data-mod="AltLeft">Alt</button>
+      <button data-mod="MetaLeft" id="key-meta">⌘</button>
+      <button data-mod="ShiftLeft">⇧</button>
+      <button data-k="ArrowLeft">←</button>
+      <button data-k="ArrowUp">↑</button>
+      <button data-k="ArrowDown">↓</button>
+      <button data-k="ArrowRight">→</button>
+      <button data-k="Delete">Del</button>
+      <button data-act="hide" title="Ẩn bàn phím">⌨▾</button>
     </div>
     <!-- File transfer (files.js): browse the remote machine, send / get files. -->
     <aside id="files-panel" class="files-panel" hidden>

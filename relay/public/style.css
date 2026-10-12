@@ -43,7 +43,7 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); flex: none; }
 .dot.busy { background: #f0b429; }
 
-#session { position: fixed; inset: 0; display: flex; flex-direction: column; background: #000; }
+#session { position: fixed; inset: 0; display: flex; flex-direction: column; background: #000; overflow: hidden; }
 .toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--panel);
   border-bottom: 1px solid var(--line); font-size: 13px; flex-wrap: wrap; }
 .toolbar button, .toolbar select { padding: 4px 9px; font-size: 13px; }
@@ -54,7 +54,7 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 :fullscreen .toolbar { position: absolute; top: 0; left: 50%; transform: translate(-50%, calc(-100% + 4px));
   border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; z-index: 5; transition: transform .15s; }
 :fullscreen .toolbar:hover { transform: translate(-50%, 0); }
-.stage { flex: 1; min-height: 0; position: relative; overflow: hidden; outline: none; display: flex; }
+.stage { flex: 1; min-height: 0; position: relative; overflow: hidden; outline: none; display: flex; touch-action: none; }
 .stage.zoomed { overflow: auto; }
 #screen { margin: auto; flex: none; display: block; }
 #screen { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; image-rendering: auto;
@@ -145,3 +145,61 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .getclip { display: inline-flex; }
 .getclip #btn-getclip { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none; }
 .getclip #btn-getclip-x { border-top-left-radius: 0; border-bottom-left-radius: 0; padding-left: 7px; padding-right: 7px; color: var(--muted); }
+
+/* Toolbar: everything inline on wide screens; on phones the extras live in the ⋯ menu. */
+.tb-extra { display: contents; }
+.menu-stats, .menu-label, .menu-only, #btn-more { display: none; }
+@media (max-width: 900px), (max-height: 500px) {
+  .toolbar { flex-wrap: nowrap; position: relative; gap: 6px; padding: 6px 8px; }
+  .toolbar button, .toolbar select { padding: 7px 11px; font-size: 15px; }
+  .toolbar .stats { display: none; }
+  .toolbar .name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #btn-more { display: inline-block; }
+  .tb-extra { display: none; position: absolute; top: calc(100% + 4px); right: 8px; z-index: 30;
+    width: min(290px, calc(100vw - 16px)); max-height: calc(100dvh - 70px); overflow: auto;
+    flex-direction: column; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  .tb-extra.open { display: flex; }
+  .tb-extra select, .tb-extra button { width: 100%; text-align: left; padding: 10px 12px; font-size: 15px; }
+  .tb-extra .chk { color: var(--text); font-size: 15px; padding: 6px 2px; gap: 10px; }
+  .tb-extra .chk input { width: 20px; height: 20px; }
+  .menu-stats { display: block; color: var(--muted); }
+  .menu-label { display: inline; }
+  .tb-extra .menu-only { display: block; }
+}
+
+/* Phone in landscape / touch fullscreen: the toolbar slides in from the top (▾). */
+#session.tb-auto .toolbar { position: absolute; top: 0; left: 0; right: 0; z-index: 25; transform: translateY(-100%);
+  transition: transform .18s; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  padding-top: max(6px, env(safe-area-inset-top)); padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+#session.tb-auto.tb-show .toolbar { transform: none; }
+.tb-handle { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 24; padding: 2px 22px 4px;
+  font-size: 13px; line-height: 1; border-top: 0; border-radius: 0 0 10px 10px; opacity: .8; }
+#session.tb-show .tb-handle { visibility: hidden; }
+
+/* Touchpad pointer (tip at the element's top-left corner). */
+.tp-cursor { position: absolute; left: 0; top: 0; width: 22px; height: 22px; z-index: 6; pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22'%3E%3Cpath d='M1.5 1.5v16l4.3-3.9 2.9 6.6 2.6-1.1-2.9-6.5h5.9z' fill='%23fff' stroke='%23000' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat; }
+
+/* "Clicked into a text field": one tap opens the phone keyboard. */
+.kb-offer { position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 14;
+  padding: 12px 22px; font-size: 16px; font-weight: 600; border-radius: 24px; background: var(--accent); border-color: var(--accent);
+  color: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+
+.touch-hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 16; width: max-content;
+  max-width: calc(100% - 32px); display: grid; gap: 10px; justify-items: center; text-align: center; white-space: pre-line;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.touch-hint button { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Extra keys above the phone keyboard. */
+.keyrow { display: flex; gap: 4px; padding: 6px; flex: none; background: var(--panel); border-top: 1px solid var(--line); touch-action: none; }
+.keyrow button { flex: 1 1 0; min-width: 0; padding: 10px 0; font-size: 14px; border-radius: 6px; -webkit-user-select: none; user-select: none; }
+.keyrow button.armed { border-color: var(--accent); color: var(--accent); }
+.keyrow button.locked { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Login: 👁 shows what was typed. */
+.pw-field { position: relative; display: flex; }
+.pw-field input { flex: 1; min-width: 0; padding-right: 46px; }
+.pw-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: transparent; border: 0; padding: 6px 8px; font-size: 18px; line-height: 1; }

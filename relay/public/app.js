@@ -12,6 +12,8 @@ const QUALITY = {
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 const P2P_SUPPORTED = 'RTCPeerConnection' in window && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 const IS_MAC_VIEWER = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+// Phone-sized window: the less used toolbar items move into the ⋯ menu (style.css).
+const COMPACT = matchMedia('(max-width: 900px), (max-height: 500px)');
 
 // ---------------------------------------------------------------- prefs (per browser)
 
@@ -29,6 +31,14 @@ function show(name) {
 }
 
 // ---------------------------------------------------------------- login
+
+$('login-eye').onclick = () => {
+  const inp = $('login-token'), show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  $('login-eye').textContent = show ? '🙈' : '👁';
+  $('login-eye').title = show ? 'Ẩn mã' : 'Hiện mã';
+  inp.focus();
+};
 
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -142,13 +152,15 @@ function startSession(id) {
     ctx: canvas.getContext('2d', { alpha: false, desynchronized: true }),
     bytes: 0,
     frames: 0,
-    pressed: new Set(),
+    pressed: new Map(), // physical e.code → code sent to the remote
     gate: Promise.resolve(),
     lastClip: '',
     lastKfReq: 0,
     retry: null,
     statsTimer: setInterval(updateStats, 1000),
     control: false, // every session starts view-only
+    tp: { x: 0.5, y: 0.5 }, // touchpad pointer, 0..1 of the remote screen
+    tpUsed: false,
     // Direct path (WebRTC): video arrives as an RTP track, input leaves over a
     // data channel. Until the first P2P frame shows, the relay stream is used.
     pc: null,
@@ -175,6 +187,7 @@ function stopSession() {
   if (!S) return;
   S.closed = true;
   clearTimeout(S.retry);
+  $('kb-offer').hidden = true;
   clearInterval(S.statsTimer);
   stopP2P(null);
   filesReset();
@@ -243,14 +256,18 @@ function onControl(m) {
       const def = IS_MAC_VIEWER !== (m.agent.os === 'darwin'); // swap by default across OSes
       $('chk-swap').checked = prefs.get(key, def);
       S.zoom = prefs.get(`zoom:${m.agent.id}`, 'fit');
-      $('sel-zoom').value = S.zoom;
+      syncZoomSelect();
       fitCanvas();
+      $('key-meta').textContent = m.agent.os === 'darwin' ? '⌘' : 'Win';
       setOverlay('Đang chờ hình ảnh…');
       startP2P();
       break;
     }
     case 'rtc':
       onRtc(m);
+      break;
+    case 'edit': // agent 0.2.4+: the focus is (not) a text field after a click / while typing
+      onEdit(m);
       break;
     case 'fls': case 'fmeta': case 'fack': case 'fdone': case 'ferr': case 'fclip': case 'clipfiles':
       onFileMsg(m); // files.js
@@ -512,6 +529,16 @@ function fitCanvas() {
   c.style.width = `${Math.floor(S.vw * scale)}px`;
   c.style.height = `${Math.floor(S.vh * scale)}px`;
   st.classList.toggle('zoomed', z !== 'fit');
+  placeCursor();
+}
+
+// Pinch zoom gives factors the menu does not list: show them as an extra entry.
+function syncZoomSelect() {
+  const sel = $('sel-zoom'), custom = $('zoom-custom'), z = String(S.zoom || 'fit');
+  const known = [...sel.options].some((o) => o !== custom && o.value === z);
+  custom.hidden = known;
+  if (!known) { custom.value = z; custom.textContent = `🔍 ${Math.round(Number(z) * 100)}%`; }
+  sel.value = z;
 }
 
 function setZoom(z) {
@@ -522,12 +549,14 @@ function setZoom(z) {
   const cy = (st.scrollTop + st.clientHeight / 2) / Math.max(1, st.scrollHeight);
   S.zoom = z;
   if (S.agent) prefs.set(`zoom:${S.agent.id}`, z);
-  $('sel-zoom').value = z;
+  syncZoomSelect();
   fitCanvas();
   st.scrollLeft = cx * st.scrollWidth - st.clientWidth / 2;
   st.scrollTop = cy * st.scrollHeight - st.clientHeight / 2;
 }
 window.addEventListener('resize', fitCanvas);
+// The stage also changes size when the toolbar hides or the phone keyboard opens.
+if (window.ResizeObserver) new ResizeObserver(() => fitCanvas()).observe($('stage'));
 document.addEventListener('fullscreenchange', () => {
   setTimeout(fitCanvas, 50);
   if (!document.fullscreenElement && navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
@@ -551,6 +580,7 @@ async function updateStats() {
   }
   const enc = $('sess-stats').dataset.enc;
   $('sess-stats').textContent = s.vw ? `${s.vw}×${s.vh} · ${fps} fps · ${kbps} kbps · ${path}${enc ? ' · ' + enc : ''}` : '';
+  $('menu-stats').textContent = $('sess-stats').textContent;
 }
 
 // ---------------------------------------------------------------- mouse
@@ -586,6 +616,7 @@ function edgePan(e) {
 canvas.addEventListener('pointermove', (e) => {
   if (!S || !S.control || e.pointerType === 'touch') return;
   edgePan(e);
+  syncModifiers(e);
   const first = !pendingMove;
   pendingMove = norm(e);
   if (first) requestAnimationFrame(flushMove); // coalesce to one move per display frame
@@ -593,6 +624,7 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerdown', (e) => {
   if (!S || e.pointerType === 'touch') return;
   if (!S.control) { nudgeMode(); return; }
+  syncModifiers(e);
   e.preventDefault();
   stage.focus();
   canvas.setPointerCapture(e.pointerId);
@@ -614,6 +646,7 @@ for (const ev of ['mouseup', 'auxclick']) canvas.addEventListener(ev, (e) => { i
 stage.addEventListener('wheel', (e) => {
   if (!S || !S.control) return;
   e.preventDefault();
+  syncModifiers(e);
   const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
   wheelAcc.dx += e.deltaX * k;
   wheelAcc.dy += e.deltaY * k;
@@ -628,10 +661,20 @@ stage.addEventListener('wheel', (e) => {
 
 
 // ---------------------------------------------------------------- touch (phone / tablet)
-// tap = click · double tap = double click · long press = right click
-// one-finger drag = mouse drag · two-finger drag = scroll
+// Two ways to use touch (⋯ → ☝):
+//  touchpad (default): the screen works like a laptop touchpad. Drag = move the
+//    pointer (faster swipes go further), tap = click, double tap = double click,
+//    two-finger tap or long press = right click, long press then drag = drag.
+//  direct: tap where you want to click, drag = mouse drag, long press = right click.
+// Both: two-finger drag = scroll, pinch = zoom and pan the view. View-only:
+// drag pans the view, pinch zooms.
 
+const IS_TOUCH = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
+const tpCursor = $('tp-cursor');
 let touch = null;
+
+const isTrackpad = () => prefs.get('touch', 'trackpad') === 'trackpad';
+const pt = (t) => ({ clientX: t.clientX, clientY: t.clientY });
 
 function sendMoveTo(t) {
   pendingMove = norm(t);
@@ -644,75 +687,223 @@ function clickAt(t, b) {
   send({ t: 'mu', b });
 }
 
+function clickCursor(b) {
+  pendingMove = { x: S.tp.x, y: S.tp.y };
+  flushMove();
+  send({ t: 'md', b });
+  send({ t: 'mu', b });
+}
+
 function touchCenter(list) {
   let x = 0, y = 0;
   for (const t of list) { x += t.clientX; y += t.clientY; }
-  return { x: x / list.length, y: y / list.length };
+  return { clientX: x / list.length, clientY: y / list.length };
 }
 
-canvas.addEventListener('touchstart', (e) => {
-  if (!S) return;
+function touchDist(list) {
+  return Math.hypot(list[0].clientX - list[1].clientX, list[0].clientY - list[1].clientY);
+}
+
+// The local pointer drawn in touchpad mode: the one in the video lags behind.
+// It sits outside the scrolling stage so it never makes the stage scroll further.
+function placeCursor() {
+  const on = !!(S && S.control && S.tpUsed && S.vw && isTrackpad());
+  tpCursor.hidden = !on;
+  if (!on) return;
+  const r = canvas.getBoundingClientRect(), sr = $('session').getBoundingClientRect();
+  tpCursor.style.transform = `translate(${r.left - sr.left + S.tp.x * r.width}px, ${r.top - sr.top + S.tp.y * r.height}px)`;
+}
+stage.addEventListener('scroll', placeCursor);
+
+// Zoomed in: scroll the view so the pointer stays away from the edges.
+function followCursor() {
+  if (!S.zoom || S.zoom === 'fit') return;
+  const px = canvas.offsetLeft + S.tp.x * canvas.offsetWidth;
+  const py = canvas.offsetTop + S.tp.y * canvas.offsetHeight;
+  const w = stage.clientWidth, h = stage.clientHeight, m = 0.18;
+  if (px < stage.scrollLeft + w * m) stage.scrollLeft = px - w * m;
+  else if (px > stage.scrollLeft + w * (1 - m)) stage.scrollLeft = px - w * (1 - m);
+  if (py < stage.scrollTop + h * m) stage.scrollTop = py - h * m;
+  else if (py > stage.scrollTop + h * (1 - m)) stage.scrollTop = py - h * (1 - m);
+}
+
+function moveTrackpad(dx, dy, dt) {
+  const v = Math.hypot(dx, dy) / Math.max(dt, 8); // CSS px per ms
+  const gain = 1 + 1.6 * Math.min(v, 1.5);
+  S.tp.x = Math.min(1, Math.max(0, S.tp.x + (dx * gain) / canvas.offsetWidth));
+  S.tp.y = Math.min(1, Math.max(0, S.tp.y + (dy * gain) / canvas.offsetHeight));
+  const first = !pendingMove;
+  pendingMove = { x: S.tp.x, y: S.tp.y };
+  if (first) requestAnimationFrame(flushMove);
+  followCursor();
+  placeCursor();
+}
+
+// Pinch keeps the remote point first touched under the fingers' centre, so
+// moving both fingers also pans.
+function startPinch(list) {
+  const c = touchCenter(list);
+  const r = canvas.getBoundingClientRect();
+  touch = {
+    mode: 'two', t0: performance.now(), c0: c, last: c, d0: Math.max(1, touchDist(list)),
+    scale0: canvas.offsetWidth / S.vw, ax: (c.clientX - r.left) / r.width, ay: (c.clientY - r.top) / r.height,
+  };
+}
+
+function doPinch(list) {
+  const c = touchCenter(list);
+  const fit = Math.min(stage.clientWidth / S.vw, stage.clientHeight / S.vh);
+  const s = Math.min(Math.max(touch.scale0 * touchDist(list) / touch.d0, fit), Math.max(3, fit));
+  S.zoom = s <= fit * 1.03 ? 'fit' : String(+s.toFixed(3));
+  fitCanvas();
+  const sr = stage.getBoundingClientRect();
+  stage.scrollLeft = canvas.offsetLeft + touch.ax * canvas.offsetWidth - (c.clientX - sr.left);
+  stage.scrollTop = canvas.offsetTop + touch.ay * canvas.offsetHeight - (c.clientY - sr.top);
+  placeCursor();
+}
+
+function endPinch() {
+  if (S.agent) prefs.set(`zoom:${S.agent.id}`, S.zoom);
+  syncZoomSelect();
+}
+
+const onStage = (e) => e.target === canvas || e.target === stage;
+
+stage.addEventListener('touchstart', (e) => {
+  if (!S || !onStage(e)) return;
   e.preventDefault();
-  if (!S.control) { nudgeMode(); return; }
+  if ($('session').classList.contains('tb-show')) hideToolbar();
   if (touch && touch.timer) clearTimeout(touch.timer);
   if (e.touches.length >= 2) {
-    if (touch && touch.mode === 'drag') send({ t: 'mu', b: 0 });
-    touch = { mode: 'scroll', last: touchCenter(e.touches) };
+    if (touch && touch.mode === 'drag') { flushMove(); send({ t: 'mu', b: 0 }); }
+    if (S.vw) startPinch(e.touches);
     return;
   }
+  if (S.control && isTrackpad() && !S.tpUsed) { S.tpUsed = true; placeCursor(); }
   const t = e.touches[0];
-  const start = { clientX: t.clientX, clientY: t.clientY };
   touch = {
-    mode: 'pending',
-    start,
+    mode: 'pending', start: pt(t), last: pt(t), lastT: e.timeStamp,
     timer: setTimeout(() => {
-      if (touch && touch.mode === 'pending') {
-        clickAt(start, 2);
-        touch.mode = 'done';
-        if (navigator.vibrate) navigator.vibrate(15);
-      }
-    }, 550),
+      if (!touch || touch.mode !== 'pending' || !S || !S.control) return;
+      if (navigator.vibrate) navigator.vibrate(15);
+      if (isTrackpad()) { touch.mode = 'hold'; return; } // right click on release, drag on move
+      clickAt(touch.start, 2);
+      touch.mode = 'done';
+    }, 500),
   };
 }, { passive: false });
 
-canvas.addEventListener('touchmove', (e) => {
-  if (!S || !S.control || !touch) return;
+stage.addEventListener('touchmove', (e) => {
+  if (!S || !touch) return;
   e.preventDefault();
-  if (touch.mode === 'scroll' && e.touches.length >= 2) {
-    const c = touchCenter(e.touches);
-    // Finger moves up → content scrolls down (positive dy), like a trackpad.
-    send({ t: 'wh', dx: Math.round((touch.last.x - c.x) * 2), dy: Math.round((touch.last.y - c.y) * 2) });
-    touch.last = c;
+  if (e.touches.length >= 2) {
+    if (touch.mode === 'two') {
+      const c = touchCenter(e.touches);
+      const moved = Math.hypot(c.clientX - touch.c0.clientX, c.clientY - touch.c0.clientY);
+      const spread = Math.abs(touchDist(e.touches) - touch.d0);
+      if (spread > 30 || (!S.control && (spread > 4 || moved > 4))) touch.mode = 'pinch';
+      else if (moved > 12) touch.mode = 'scroll';
+    }
+    if (touch.mode === 'pinch') doPinch(e.touches);
+    else if (touch.mode === 'scroll') {
+      const c = touchCenter(e.touches);
+      // Fingers move up → content scrolls down (positive dy), like a trackpad.
+      send({ t: 'wh', dx: Math.round((touch.last.clientX - c.clientX) * 2), dy: Math.round((touch.last.clientY - c.clientY) * 2) });
+      touch.last = c;
+    }
     return;
   }
-  const t = e.touches[0];
-  if (touch.mode === 'pending') {
-    if (Math.hypot(t.clientX - touch.start.clientX, t.clientY - touch.start.clientY) < 10) return;
+  const t = pt(e.touches[0]);
+  const far = Math.hypot(t.clientX - touch.start.clientX, t.clientY - touch.start.clientY) >= 8;
+  const dx = t.clientX - touch.last.clientX, dy = t.clientY - touch.last.clientY, dt = e.timeStamp - touch.lastT;
+  touch.last = t;
+  touch.lastT = e.timeStamp;
+  if (!S.control) { // view-only: pan
+    if (touch.mode === 'pending' && far) { clearTimeout(touch.timer); touch.mode = 'pan'; }
+    if (touch.mode === 'pan') { stage.scrollLeft -= dx; stage.scrollTop -= dy; }
+    return;
+  }
+  if (isTrackpad()) {
+    if (touch.mode === 'pending' && far) { clearTimeout(touch.timer); touch.mode = 'move'; }
+    else if (touch.mode === 'hold' && far) { touch.mode = 'drag'; clickCursorDown(); }
+    if (touch.mode === 'move' || touch.mode === 'drag') moveTrackpad(dx, dy, dt);
+    return;
+  }
+  if (touch.mode === 'pending' && far) {
     clearTimeout(touch.timer);
     touch.mode = 'drag';
     sendMoveTo(touch.start);
     send({ t: 'md', b: 0 });
   }
   if (touch.mode === 'drag') {
+    const first = !pendingMove;
     pendingMove = norm(t);
-    requestAnimationFrame(flushMove);
+    if (first) requestAnimationFrame(flushMove);
   }
 }, { passive: false });
 
-canvas.addEventListener('touchend', (e) => {
-  if (!S || !S.control || !touch) return;
+function clickCursorDown() {
+  pendingMove = { x: S.tp.x, y: S.tp.y };
+  flushMove();
+  send({ t: 'md', b: 0 });
+}
+
+stage.addEventListener('touchend', (e) => {
+  if (!S || !touch) return;
   e.preventDefault();
   if (touch.timer) clearTimeout(touch.timer);
-  if (touch.mode === 'pending') clickAt(touch.start, 0);
+  if (touch.mode === 'two') { // two-finger tap = right click
+    if (S.control && performance.now() - touch.t0 < 350) { if (isTrackpad()) clickCursor(2); else clickAt(touch.c0, 2); }
+    touch.mode = 'done';
+  }
+  if (e.touches.length > 0) return;
+  if (touch.mode === 'pending') {
+    if (!S.control) nudgeMode();
+    else if (isTrackpad()) { clickCursor(0); S.editAt = { ...S.tp }; }
+    else { clickAt(touch.start, 0); S.editAt = norm(touch.start); }
+  } else if (touch.mode === 'hold') clickCursor(2);
   else if (touch.mode === 'drag') { flushMove(); send({ t: 'mu', b: 0 }); }
-  if (e.touches.length === 0) touch = null;
+  else if (touch.mode === 'pinch') endPinch();
+  touch = null;
 }, { passive: false });
 
-canvas.addEventListener('touchcancel', () => {
-  if (touch && touch.mode === 'drag') send({ t: 'mu', b: 0 });
-  if (touch && touch.timer) clearTimeout(touch.timer);
+stage.addEventListener('touchcancel', () => {
+  if (!touch) return;
+  if (touch.mode === 'drag') send({ t: 'mu', b: 0 });
+  if (touch.mode === 'pinch') endPinch();
+  if (touch.timer) clearTimeout(touch.timer);
   touch = null;
 });
+
+// One-time help for the touch gestures (also ⋯ → ❔).
+const HINTS = {
+  trackpad: 'Kéo 1 ngón: di chuột\nChạm: click · Chạm 2 lần: double-click\nChạm 2 ngón hoặc giữ: click phải\nGiữ rồi kéo: kéo thả\n2 ngón kéo: cuộn\nChụm / mở 2 ngón: zoom',
+  direct: 'Chạm: click tại chỗ chạm\nGiữ: click phải · Kéo: kéo thả\n2 ngón kéo: cuộn\nChụm / mở 2 ngón: zoom\nBấm nút nhỏ dễ hơn với Touchpad (⋯ → ☝).',
+};
+
+function showTouchHint() {
+  const mode = isTrackpad() ? 'trackpad' : 'direct';
+  $('touch-hint-body').textContent = HINTS[mode];
+  $('touch-hint').hidden = false;
+  prefs.set(`hint:${mode}`, true);
+}
+
+function maybeTouchHint() {
+  if (IS_TOUCH && S && S.control && !prefs.get(`hint:${isTrackpad() ? 'trackpad' : 'direct'}`, false)) showTouchHint();
+}
+
+$('touch-hint-ok').onclick = () => { $('touch-hint').hidden = true; stage.focus(); };
+$('btn-help').onclick = showTouchHint;
+
+$('sel-touch').hidden = !IS_TOUCH;
+$('btn-help').hidden = !IS_TOUCH;
+$('sel-touch').value = prefs.get('touch', 'trackpad');
+$('sel-touch').onchange = (e) => {
+  prefs.set('touch', e.target.value);
+  placeCursor();
+  maybeTouchHint();
+  stage.focus();
+};
 
 // On-screen keyboard: a hidden textarea brings up the phone keyboard. Typed
 // characters become physical key presses (US layout), so the remote IME
@@ -732,11 +923,18 @@ const US_KEYS = (() => {
   return m;
 })();
 
-function tapKey(code, shift) {
-  if (shift) send({ t: 'kd', c: 'ShiftLeft' });
+function pressCombo(mods, code) {
+  for (const c of mods) send({ t: 'kd', c });
   send({ t: 'kd', c: code });
   send({ t: 'ku', c: code });
-  if (shift) send({ t: 'ku', c: 'ShiftLeft' });
+  for (const c of [...mods].reverse()) send({ t: 'ku', c });
+}
+
+// Typed keys pick up the Ctrl/Alt/⌘/⇧ armed on the key row.
+function tapKey(code, shift) {
+  const mods = takeMods();
+  if (shift && !mods.includes('ShiftLeft')) mods.push('ShiftLeft');
+  pressCombo(mods, code);
 }
 
 function pasteText(text) {
@@ -780,6 +978,129 @@ $('btn-kb').onclick = () => {
   if (document.activeElement === vkb) { vkb.blur(); stage.focus(); } else vkb.focus();
 };
 
+// Key row above the phone keyboard. A modifier tap arms it for the next key;
+// a double tap locks it until tapped again. Arrows etc. repeat while held.
+const keyrow = $('keyrow');
+const armed = new Map(); // code → { lock, at }
+
+function renderMods() {
+  for (const b of keyrow.querySelectorAll('[data-mod]')) {
+    const a = armed.get(b.dataset.mod);
+    b.classList.toggle('armed', !!a && !a.lock);
+    b.classList.toggle('locked', !!a && a.lock);
+  }
+}
+
+function toggleMod(code) {
+  const a = armed.get(code);
+  if (!a) armed.set(code, { lock: false, at: performance.now() });
+  else if (!a.lock && performance.now() - a.at < 400) a.lock = true;
+  else armed.delete(code);
+  renderMods();
+}
+
+function takeMods() {
+  const list = [...armed.keys()];
+  for (const [c, a] of armed) if (!a.lock) armed.delete(c);
+  if (list.length) renderMods();
+  return list;
+}
+
+let keyRepeat = null;
+function stopKeyRepeat() {
+  if (!keyRepeat) return;
+  clearTimeout(keyRepeat.wait);
+  clearInterval(keyRepeat.every);
+  keyRepeat = null;
+}
+
+keyrow.addEventListener('pointerdown', (e) => {
+  const b = e.target.closest('button');
+  e.preventDefault(); // keep focus (and the phone keyboard) on the textarea
+  if (!b) return;
+  if (b.dataset.act === 'hide') { vkb.blur(); stage.focus(); return; }
+  if (!S || !S.control) { nudgeMode(); return; }
+  if (b.dataset.mod) { toggleMod(b.dataset.mod); return; }
+  const code = b.dataset.k, mods = takeMods();
+  pressCombo(mods, code);
+  stopKeyRepeat();
+  const r = { every: null };
+  r.wait = setTimeout(() => { r.every = setInterval(() => pressCombo(mods, code), 70); }, 400);
+  keyRepeat = r;
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) keyrow.addEventListener(ev, stopKeyRepeat);
+// No focus change and no ghost click: the key already fired on pointerdown.
+keyrow.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+keyrow.addEventListener('mousedown', (e) => e.preventDefault());
+
+// While the phone keyboard is up, fit the session into what is left of the
+// screen (visualViewport) so the keyboard does not cover the remote screen.
+function fitToKeyboard() {
+  const ses = $('session'), vv = window.visualViewport;
+  const open = document.activeElement === vkb;
+  keyrow.hidden = !open;
+  if (!open || !vv) { ses.style.top = ses.style.height = ses.style.bottom = ''; return; }
+  ses.style.top = `${vv.offsetTop}px`;
+  ses.style.height = `${vv.height}px`;
+  ses.style.bottom = 'auto';
+  setTimeout(revealEdit, 60); // once the stage has its new size
+}
+vkb.addEventListener('focus', () => { $('kb-offer').hidden = true; fitToKeyboard(); });
+vkb.addEventListener('blur', () => { stopKeyRepeat(); armed.clear(); renderMods(); fitToKeyboard(); restoreKbZoom(); });
+
+// Typing on a phone: zoom to readable text and keep the field being typed in
+// (the agent's caret, else the last tap) just above the keyboard. The zoom
+// from before comes back when the keyboard closes.
+const KB_SCALE = 0.75; // CSS px per remote px: small UI text stays legible
+
+function revealEdit() {
+  if (!S || !S.vw || !S.editAt || document.activeElement !== vkb) return;
+  if (!S.kbSaved) S.kbSaved = { zoom: S.zoom, left: stage.scrollLeft, top: stage.scrollTop };
+  const fit = Math.min(stage.clientWidth / S.vw, stage.clientHeight / S.vh);
+  const want = Math.max(fit, KB_SCALE);
+  if (canvas.offsetWidth / S.vw < want * 0.98) {
+    S.zoom = String(+want.toFixed(3));
+    fitCanvas();
+    syncZoomSelect();
+  }
+  stage.scrollLeft = canvas.offsetLeft + S.editAt.x * canvas.offsetWidth - stage.clientWidth * 0.3;
+  stage.scrollTop = canvas.offsetTop + S.editAt.y * canvas.offsetHeight - stage.clientHeight * 0.45;
+  placeCursor();
+}
+
+function restoreKbZoom() {
+  const k = S && S.kbSaved;
+  if (!k) return;
+  S.kbSaved = null;
+  S.zoom = k.zoom;
+  fitCanvas();
+  syncZoomSelect();
+  stage.scrollLeft = k.left;
+  stage.scrollTop = k.top;
+  placeCursor();
+}
+
+// A click landed in a text field: open the keyboard. iOS only opens it from
+// a tap, so the web page offers a button; the iOS app can open it directly.
+let kbOfferTimer = null;
+function onEdit(m) {
+  if (!IS_TOUCH || !S || !S.control) return;
+  if (m.x != null) S.editAt = { x: m.x, y: m.y };
+  const offer = $('kb-offer');
+  if (document.activeElement === vkb) { if (m.on) revealEdit(); return; }
+  if (!m.click) return;
+  clearTimeout(kbOfferTimer);
+  if (!m.on) { offer.hidden = true; return; }
+  if (window.rdNative && window.rdNative.autoKeyboard) { vkb.focus(); return; }
+  offer.hidden = false;
+  kbOfferTimer = setTimeout(() => { offer.hidden = true; }, 6000);
+}
+$('kb-offer').onclick = () => { $('kb-offer').hidden = true; vkb.focus(); };
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', fitToKeyboard);
+  visualViewport.addEventListener('scroll', fitToKeyboard);
+}
+
 // ---------------------------------------------------------------- keyboard
 
 const SWAP = { ControlLeft: 'MetaLeft', MetaLeft: 'ControlLeft', ControlRight: 'MetaRight', MetaRight: 'ControlRight' };
@@ -815,7 +1136,7 @@ function pasteViaClipboardApi() {
       } catch { /* permission denied or timeout: paste whatever the remote has */ }
     });
   }
-  S.pressed.add(code);
+  S.pressed.set('KeyV', code);
   send({ t: 'kd', c: code });
 }
 
@@ -828,12 +1149,28 @@ window.addEventListener('paste', (e) => {
   if (handlePasteEvent(e)) { S.swallowKeyUp = code; return; } // files.js sends the keystroke when done
   const text = e.clipboardData && e.clipboardData.getData('text/plain');
   if (text && text !== S.lastClip) { S.lastClip = text; send({ t: 'clip', text }); }
-  S.pressed.add(code);
+  S.pressed.set('KeyV', code);
   send({ t: 'kd', c: code });
 });
 
+// A keyup the page never sees (focus moved, OS shortcut, swallowed by the
+// browser) leaves the key held on the remote: a stuck Ctrl turns every scroll
+// into Ctrl+wheel there, i.e. zoom. Every input event carries the real modifier
+// state, so release whatever the browser says is no longer down.
+const MOD_FLAG = {
+  ControlLeft: 'ctrlKey', ControlRight: 'ctrlKey', MetaLeft: 'metaKey', MetaRight: 'metaKey',
+  AltLeft: 'altKey', AltRight: 'altKey', ShiftLeft: 'shiftKey', ShiftRight: 'shiftKey',
+};
+function syncModifiers(e) {
+  if (!S || !S.control || !S.pressed.size) return;
+  for (const [phys, c] of S.pressed) {
+    if (MOD_FLAG[phys] && !e[MOD_FLAG[phys]]) { S.pressed.delete(phys); send({ t: 'ku', c }); }
+  }
+}
+
 window.addEventListener('keydown', (e) => {
   if (!S || !S.control || keyTargetIsUi(e) || !e.code) return;
+  syncModifiers(e);
   const code = mapCode(e.code);
   if (e.code === 'KeyV' && (e.ctrlKey || e.metaKey) && !e.repeat) {
     S.pasteKey = code;
@@ -842,22 +1179,23 @@ window.addEventListener('keydown', (e) => {
   }
   e.preventDefault();
   if (e.code === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
-  S.pressed.add(code);
+  S.pressed.set(e.code, code);
   send({ t: 'kd', c: code });
 });
 
 window.addEventListener('keyup', (e) => {
-  if (!S || !S.control || keyTargetIsUi(e) || !e.code) return;
+  // A key pressed on the screen and released over the toolbar still goes up.
+  if (!S || !S.control || !e.code || (keyTargetIsUi(e) && !S.pressed.has(e.code))) return;
   e.preventDefault();
-  const code = mapCode(e.code);
+  const code = S.pressed.get(e.code) || mapCode(e.code); // as sent, even if ⌘/Ctrl swap changed since
   if (S.pasteKey === code) pasteViaClipboardApi(); // released before any paste event
   if (S.swallowKeyUp === code) { S.swallowKeyUp = null; return; }
   if (e.code === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
-  S.pressed.delete(code);
+  S.pressed.delete(e.code);
   send({ t: 'ku', c: code });
   // macOS browsers swallow keyup for keys released while ⌘ is held.
   if (IS_MAC_VIEWER && (e.code === 'MetaLeft' || e.code === 'MetaRight')) {
-    for (const c of [...S.pressed]) { S.pressed.delete(c); send({ t: 'ku', c }); }
+    for (const [phys, c] of [...S.pressed]) { S.pressed.delete(phys); send({ t: 'ku', c }); }
   }
 });
 
@@ -872,7 +1210,8 @@ $('btn-back').onclick = () => { location.hash = '#/'; };
 function updateMode() {
   const on = !!(S && S.control);
   const b = $('btn-mode');
-  b.textContent = on ? '🖱 Đang điều khiển' : '👁 Chỉ xem';
+  if (COMPACT.matches) b.textContent = on ? '🖱 Điều khiển' : '👁 Xem';
+  else b.textContent = on ? '🖱 Đang điều khiển' : '👁 Chỉ xem';
   b.title = on ? 'Bấm để chuyển về chỉ xem' : 'Bấm để điều khiển chuột / bàn phím';
   b.classList.toggle('on', on);
   canvas.classList.toggle('view-only', !on);
@@ -887,7 +1226,10 @@ function setControl(on) {
   }
   S.control = on;
   updateMode();
+  placeCursor();
+  if (!on && document.activeElement === vkb) vkb.blur();
   stage.focus();
+  if (on) maybeTouchHint();
 }
 
 function nudgeMode() {
@@ -898,6 +1240,44 @@ function nudgeMode() {
 }
 
 $('btn-mode').onclick = () => setControl(!(S && S.control));
+COMPACT.addEventListener('change', updateMode);
+
+// ⋯ menu (phone-sized windows): closes after a choice or a tap elsewhere.
+const tbExtra = $('tb-extra');
+const closeMenu = () => tbExtra.classList.remove('open');
+$('btn-more').onclick = () => { tbExtra.classList.toggle('open'); keepToolbar(); };
+document.addEventListener('pointerdown', (e) => {
+  if (tbExtra.classList.contains('open') && !tbExtra.contains(e.target) && e.target !== $('btn-more')) closeMenu();
+}, true);
+tbExtra.addEventListener('change', (e) => { if (e.target.tagName === 'SELECT') closeMenu(); });
+tbExtra.addEventListener('click', (e) => { if (e.target.closest('button')) closeMenu(); });
+
+// Phone in landscape (or fullscreen on a touch screen): the toolbar slides
+// away to leave the whole height to the remote screen; ▾ brings it back.
+const SHORT = matchMedia('(max-height: 500px)');
+let tbTimer = null;
+function updateTbAuto() {
+  const auto = SHORT.matches || (!!document.fullscreenElement && IS_TOUCH);
+  $('session').classList.toggle('tb-auto', auto);
+  $('tb-handle').hidden = !auto;
+  closeMenu();
+  if (!auto) $('session').classList.remove('tb-show');
+}
+function keepToolbar() {
+  clearTimeout(tbTimer);
+  tbTimer = setTimeout(hideToolbar, 5000);
+}
+function hideToolbar() {
+  const el = document.activeElement; // a native <select> picker may still be open
+  if (tbExtra.classList.contains('open') || (el && el.tagName === 'SELECT' && $('toolbar').contains(el))) { keepToolbar(); return; }
+  clearTimeout(tbTimer);
+  $('session').classList.remove('tb-show');
+}
+$('tb-handle').onclick = () => { $('session').classList.add('tb-show'); keepToolbar(); };
+$('toolbar').addEventListener('pointerdown', keepToolbar);
+SHORT.addEventListener('change', updateTbAuto);
+document.addEventListener('fullscreenchange', updateTbAuto);
+updateTbAuto();
 
 $('sel-zoom').onchange = (e) => { setZoom(e.target.value); stage.focus(); };
 
@@ -961,6 +1341,9 @@ $('sel-keys').onchange = (e) => {
   for (const c of keys) send({ t: 'kd', c });
   for (const c of [...keys].reverse()) send({ t: 'ku', c });
 };
+
+// iPhone Safari has no Fullscreen API; the iOS app is always fullscreen.
+if (window.rdNative ? !window.rdNative.fullscreen : !$('session').requestFullscreen) $('btn-fs').hidden = true;
 
 $('btn-fs').onclick = async () => {
   if (window.rdNative) { window.rdNative.fullscreen(); stage.focus(); return; } // desktop app window
