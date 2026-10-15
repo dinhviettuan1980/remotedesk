@@ -196,6 +196,8 @@ function stopSession() {
   if (S.latest) S.latest.close();
   S = null;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (nativeFs) window.rdNative.fullscreen();
+  nativeKeys();
 }
 
 function setOverlay(text) {
@@ -1244,6 +1246,7 @@ function setControl(on) {
   }
   S.control = on;
   updateMode();
+  nativeKeys();
   placeCursor();
   if (!on && document.activeElement === vkb) vkb.blur();
   stage.focus();
@@ -1371,6 +1374,32 @@ $('btn-fs').onclick = async () => {
   // Chrome/Edge: capture ⌘/Win/Alt+Tab etc. while fullscreen.
   if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock().catch(() => {});
   stage.focus();
+};
+
+// Windows app: fullscreen is the app's own borderless window. While it is up
+// and we are controlling, the app catches Win / Alt+Tab / Ctrl+Esc etc. and
+// hands them over here, so the remote machine feels like the local one.
+let nativeFs = false;
+let fsHintTimer = null;
+function nativeKeys() {
+  if (window.rdNative && window.rdNative.keys) window.rdNative.keys(!!(S && S.control));
+}
+window.rdNativeFsChanged = (on) => {
+  nativeFs = on;
+  $('session').classList.toggle('native-fs', on);
+  clearTimeout(fsHintTimer);
+  const hint = $('fs-hint');
+  hint.hidden = !on || !S;
+  if (on && S) {
+    hint.textContent = (S.control ? 'Phím Windows, Alt+Tab… đang gửi sang máy kia.\n' : '')
+      + 'Thoát toàn màn hình: Ctrl+Alt+Enter, hoặc đưa chuột lên mép trên → ⛶';
+    fsHintTimer = setTimeout(() => { hint.hidden = true; }, 5000);
+  }
+  setTimeout(fitCanvas, 50);
+  stage.focus();
+};
+window.rdNativeKey = (code, down, ctrlKey, altKey, shiftKey, metaKey) => {
+  window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, ctrlKey, altKey, shiftKey, metaKey, cancelable: true }));
 };
 
 window.addEventListener('beforeunload', (e) => { if (S && !window.rdNative) e.preventDefault(); });

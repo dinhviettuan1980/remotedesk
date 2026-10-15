@@ -4,8 +4,11 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -95,13 +98,32 @@ func main() {
 	defer w.Destroy()
 
 	fs := &fullscreen{hwnd: uintptr(w.Window())}
-	_ = w.Bind("rdNativeFullscreen", func() bool {
-		w.Dispatch(fs.toggle)
-		return !fs.on
-	})
+	toggle := func() {
+		fs.toggle()
+		w.Eval(fmt.Sprintf("window.rdNativeFsChanged && window.rdNativeFsChanged(%t)", fs.on))
+	}
+	_ = w.Bind("rdNativeFullscreen", func() { w.Dispatch(toggle) })
+
+	// The page says when it is controlling a machine; while it is and the
+	// window is fullscreen, Windows' own shortcuts go to that machine.
+	var wantKeys atomic.Bool
+	_ = w.Bind("rdNativeKeys", func(on bool) { wantKeys.Store(on) })
+	kh := &keyHook{
+		hwnd:   fs.hwnd,
+		active: func() bool { return fs.on && wantKeys.Load() },
+		exit:   func() { w.Dispatch(toggle) },
+		forward: func(code string, down, ctrl, alt, shift, meta bool) {
+			c, _ := json.Marshal(code)
+			js := fmt.Sprintf("window.rdNativeKey && window.rdNativeKey(%s,%t,%t,%t,%t,%t)", c, down, ctrl, alt, shift, meta)
+			w.Dispatch(func() { w.Eval(js) })
+		},
+	}
+	kh.install()
+
 	// The page calls window.rdNative.fullscreen() instead of the Fullscreen API
 	// (which would only fill the WebView, not the screen).
-	w.Init(`window.rdNative = { platform: 'windows', fullscreen: () => window.rdNativeFullscreen() };`)
+	w.Init(`window.rdNative = { platform: 'windows', fullscreen: () => window.rdNativeFullscreen(),
+  keys: (on) => window.rdNativeKeys(on) };`)
 	w.Navigate(startURL)
 	w.Run()
 }

@@ -53,6 +53,7 @@ Mở `https://remote.tuandv.id.vn` → đăng nhập → **Cài RemoteDesk lên 
 - Windows: agent + ffmpeg vào `C:\ProgramData\RemoteDesk`, chạy bằng Task Scheduler khi đăng nhập (quyền cao nhất), tắt sleep khi cắm điện.
 - macOS: agent là `~/Library/Application Support/RemoteDesk/RemoteDesk.app` (LaunchAgent); cần cấp **Screen Recording** + **Accessibility** cho RemoteDesk. Bộ cài chỉ thay agent khi có bản mới (so hash), nên chạy lại không làm mất quyền.
 - App điều khiển: `viewer-win/` (Go + WebView2) và `viewer-mac/` (Swift + WKWebView) — cửa sổ bọc trang viewer; trên Mac ⌘W/⌘Q/⌘T được gửi sang máy kia.
+  - App Windows, bấm ⛶ khi đang 🖱 Điều khiển: cửa sổ phủ cả màn hình (ẩn taskbar, thanh công cụ thu lên mép trên). Phím Windows, Alt+Tab, Alt+Esc, Ctrl+Esc, Alt+Space gửi sang máy kia. **Ctrl+Alt+Enter** để thoát. Không chặn được Ctrl+Alt+Del và Win+L.
 - Điện thoại: dùng trình duyệt. Mặc định màn hình là **touchpad** (kéo = di chuột, chạm = click, chạm 2 ngón / giữ = click phải, giữ rồi kéo = kéo thả, 2 ngón = cuộn, chụm 2 ngón = zoom); đổi sang "chạm trực tiếp" ở ⋯ → ☝. Nút ⌨ mở bàn phím kèm hàng phím Esc / Tab / Ctrl / Alt / ⌘ / ⇧ / mũi tên (Ctrl/Alt/⌘/⇧ dính cho phím kế tiếp, chạm đúp để khoá). Xoay ngang thì thanh công cụ tự ẩn, chạm ▾ ở mép trên để hiện.
 
 `remote-agent -check` để tự kiểm tra trên máy; log ở `agent.log` cạnh `config.json`.

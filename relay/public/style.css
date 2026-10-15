@@ -54,6 +54,13 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 :fullscreen .toolbar { position: absolute; top: 0; left: 50%; transform: translate(-50%, calc(-100% + 4px));
   border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; z-index: 5; transition: transform .15s; }
 :fullscreen .toolbar:hover { transform: translate(-50%, 0); }
+/* Windows app fullscreen is a borderless window, not the Fullscreen API. */
+#session.native-fs .toolbar { position: absolute; top: 0; left: 50%; transform: translate(-50%, calc(-100% + 4px));
+  border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; z-index: 5; transition: transform .15s; }
+#session.native-fs .toolbar:hover, #session.native-fs .toolbar:focus-within { transform: translate(-50%, 0); }
+.fs-hint { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); z-index: 15; max-width: calc(100% - 32px);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; font-size: 14px;
+  text-align: center; white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,.5); pointer-events: none; }
 .stage { flex: 1; min-height: 0; position: relative; overflow: hidden; outline: none; display: flex; touch-action: none; }
 .stage.zoomed { overflow: auto; }
 #screen { margin: auto; flex: none; display: block; }
