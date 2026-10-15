@@ -18,6 +18,8 @@ type StreamParams struct {
 	FPS  int `json:"fps"`
 	MaxW int `json:"maxw"`
 	Kbps int `json:"kbps"`
+
+	disp Display // what to capture (set by the agent, not the viewer)
 }
 
 func (p StreamParams) clamp() StreamParams {
@@ -27,7 +29,7 @@ func (p StreamParams) clamp() StreamParams {
 		}
 		return max(lo, min(hi, v))
 	}
-	return StreamParams{FPS: lim(p.FPS, 5, 60, 30), MaxW: lim(p.MaxW, 640, 3840, 1920), Kbps: lim(p.Kbps, 300, 20000, 3500)}
+	return StreamParams{FPS: lim(p.FPS, 5, 60, 30), MaxW: lim(p.MaxW, 640, 3840, 1920), Kbps: lim(p.Kbps, 300, 20000, 3500), disp: p.disp}
 }
 
 // gopSeconds: keyframe interval. Viewers joining or switching to P2P wait at
@@ -107,7 +109,7 @@ func usableEncoders(ff string, cfg *Config) []string {
 			args := []string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30",
 				"-frames:v", "10", "-vf", "format=" + map[bool]string{true: "yuv420p", false: "nv12"}[enc == "libx264"],
 				"-c:v", enc}
-			args = append(args, encoderArgs(enc, StreamParams{30, 1280, 2000})...)
+			args = append(args, encoderArgs(enc, StreamParams{FPS: 30, MaxW: 1280, Kbps: 2000})...)
 			args = append(args, "-b:v", "2000k", "-f", "null", "-")
 			cmd := exec.CommandContext(ctx, ff, args...)
 			hideWindow(cmd)
@@ -364,7 +366,12 @@ func (t *tailBuffer) String() string {
 func selfTest(cfg *Config, ff string) int {
 	encs := usableEncoders(ff, cfg)
 	log.Printf("usable encoders: %v", encs)
-	sp := StreamParams{FPS: 30, MaxW: 1920, Kbps: 3500}
+	displays := listDisplays()
+	for i, d := range displays {
+		log.Printf("display %d: %q %dx%d at (%g,%g) primary=%v", i, d.Name, d.PxW, d.PxH, d.X, d.Y, d.Primary)
+	}
+	disp, _ := pickDisplay(displays, cfg.Display)
+	sp := StreamParams{FPS: 30, MaxW: 1920, Kbps: 3500, disp: disp}
 	var mu sync.Mutex
 	frames, keys, bytesOut := 0, 0, 0
 	done := make(chan error, 1)

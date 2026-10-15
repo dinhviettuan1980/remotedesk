@@ -93,6 +93,7 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .install .alt .cmd { margin: 6px 0; }
 .toolbar .mode { font-weight: 600; }
 .toolbar .mode.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+#btn-audio.on { border-color: var(--accent); }
 .toolbar .mode.pulse { animation: rd-pulse .9s ease-out 2; }
 @keyframes rd-pulse { 0% { box-shadow: 0 0 0 0 rgba(76,141,255,.8); } 100% { box-shadow: 0 0 0 10px rgba(76,141,255,0); } }
 #screen.view-only { cursor: default; }

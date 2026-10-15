@@ -111,15 +111,6 @@ static int rd_focus_edit(double *x, double *y) {
 	return edit;
 }
 
-static void rd_display_bounds(int idx, double *x, double *y, double *w, double *h) {
-	CGDirectDisplayID ids[16];
-	uint32_t n = 0;
-	CGDirectDisplayID id = CGMainDisplayID();
-	if (CGGetActiveDisplayList(16, ids, &n) == kCGErrorSuccess && idx >= 0 && (uint32_t)idx < n) id = ids[idx];
-	CGRect r = CGDisplayBounds(id);
-	*x = r.origin.x; *y = r.origin.y; *w = r.size.width; *h = r.size.height;
-}
-
 static int rd_screen_access(int prompt) {
 	if (CGPreflightScreenCaptureAccess()) return 1;
 	if (prompt) CGRequestScreenCaptureAccess();
@@ -172,7 +163,7 @@ var modifierFlags = map[string]uint64{
 
 type macInjector struct {
 	mu      sync.Mutex
-	display int
+	disp    Display // the captured display: mouse and caret coordinates map onto it
 	x, y    float64 // last position in global points
 	buttons map[int]bool
 	keys    map[string]bool
@@ -185,8 +176,14 @@ type macInjector struct {
 	wheelAccY float64
 }
 
-func newInjector(display int) Injector {
-	return &macInjector{display: display, buttons: map[int]bool{}, keys: map[string]bool{}}
+func newInjector() Injector {
+	return &macInjector{buttons: map[int]bool{}, keys: map[string]bool{}}
+}
+
+func (m *macInjector) SetDisplay(d Display) {
+	m.mu.Lock()
+	m.disp = d
+	m.mu.Unlock()
 }
 
 func (m *macInjector) flags() uint64 {
@@ -200,10 +197,8 @@ func (m *macInjector) flags() uint64 {
 func (m *macInjector) MouseMove(nx, ny float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var bx, by, bw, bh C.double
-	C.rd_display_bounds(C.int(m.display), &bx, &by, &bw, &bh)
-	m.x = float64(bx) + nx*(float64(bw)-1)
-	m.y = float64(by) + ny*(float64(bh)-1)
+	m.x = m.disp.X + nx*(m.disp.W-1)
+	m.y = m.disp.Y + ny*(m.disp.H-1)
 	typ, btn := evMoved, 0
 	switch {
 	case m.buttons[0]:
@@ -311,11 +306,11 @@ func (m *macInjector) FocusedEdit() (bool, float64, float64, bool) {
 	case 2:
 		return true, 0, 0, false
 	}
-	var bx, by, bw, bh C.double
-	C.rd_display_bounds(C.int(m.display), &bx, &by, &bw, &bh)
-	nx := (float64(x) - float64(bx)) / float64(bw)
-	ny := (float64(y) - float64(by)) / float64(bh)
-	if bw <= 0 || bh <= 0 || nx < 0 || nx > 1 || ny < 0 || ny > 1 {
+	m.mu.Lock()
+	d := m.disp
+	m.mu.Unlock()
+	nx, ny, ok := d.toDisplay(float64(x), float64(y))
+	if !ok {
 		return true, 0, 0, false // caret on another display
 	}
 	return true, nx, ny, true

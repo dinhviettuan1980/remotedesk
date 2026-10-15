@@ -30,6 +30,7 @@ const (
 	mouseXUp        = 0x0100
 	mouseWheel      = 0x0800
 	mouseHWheel     = 0x1000
+	mouseVirtualDsk = 0x4000
 	mouseAbsolute   = 0x8000
 
 	keyExtended = 0x0001
@@ -71,24 +72,47 @@ func sendKey(ki keybdInput) {
 
 type winInjector struct {
 	mu      sync.Mutex
-	ax, ay  int32 // last absolute position (0..65535)
+	disp    Display // the captured monitor
+	ax, ay  int32   // last absolute position (0..65535 over the virtual desktop)
 	buttons map[int]bool
 	keys    map[string]bool
 	wheelX  float64
 	wheelY  float64
 }
 
-func newInjector(display int) Injector {
-	// Absolute coordinates without MOUSEEVENTF_VIRTUALDESK map onto the primary
-	// monitor, which is what ddagrab output 0 / gdigrab captures.
+func newInjector() Injector {
 	return &winInjector{buttons: map[int]bool{}, keys: map[string]bool{}}
 }
 
+func (w *winInjector) SetDisplay(d Display) {
+	w.mu.Lock()
+	w.disp = d
+	w.mu.Unlock()
+}
+
+// MouseMove: x, y are 0..1 over the captured monitor. Absolute coordinates
+// with MOUSEEVENTF_VIRTUALDESK span all monitors (0..65535 over the virtual desktop).
 func (w *winInjector) MouseMove(x, y float64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.ax, w.ay = int32(x*65535+0.5), int32(y*65535+0.5)
-	sendMouse(mouseInput{dx: w.ax, dy: w.ay, flags: mouseMove | mouseAbsolute})
+	d := w.disp
+	if d.vw <= 1 || d.vh <= 1 { // no display list: the primary monitor
+		w.ax, w.ay = int32(x*65535+0.5), int32(y*65535+0.5)
+		sendMouse(mouseInput{dx: w.ax, dy: w.ay, flags: mouseMove | mouseAbsolute})
+		return
+	}
+	px := d.X + x*(d.W-1) - d.vx
+	py := d.Y + y*(d.H-1) - d.vy
+	w.ax, w.ay = int32(px*65535/(d.vw-1)+0.5), int32(py*65535/(d.vh-1)+0.5)
+	sendMouse(mouseInput{dx: w.ax, dy: w.ay, flags: w.absFlags()})
+}
+
+// absFlags: absolute flags matching how ax/ay were computed.
+func (w *winInjector) absFlags() uint32 {
+	if w.disp.vw <= 1 || w.disp.vh <= 1 {
+		return mouseMove | mouseAbsolute
+	}
+	return mouseMove | mouseAbsolute | mouseVirtualDsk
 }
 
 func (w *winInjector) MouseButton(b int, down bool) {
@@ -109,7 +133,7 @@ func (w *winInjector) MouseButton(b int, down bool) {
 		return
 	}
 	w.buttons[b] = down
-	sendMouse(mouseInput{dx: w.ax, dy: w.ay, mouseData: data, flags: flags | mouseMove | mouseAbsolute})
+	sendMouse(mouseInput{dx: w.ax, dy: w.ay, mouseData: data, flags: flags | w.absFlags()})
 }
 
 func (w *winInjector) Wheel(dx, dy float64) {
@@ -200,15 +224,15 @@ type cursorInfo struct {
 // fields), else an I-beam mouse pointer right after the click (browsers,
 // Electron) counts as a text field under the pointer.
 func (w *winInjector) FocusedEdit() (bool, float64, float64, bool) {
-	sw, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN: primary monitor, what is captured
-	sh, _, _ := procGetSystemMetrics.Call(1)
-	norm := func(p winPoint) (float64, float64, bool) {
-		if sw == 0 || sh == 0 {
-			return 0, 0, false
-		}
-		nx, ny := float64(p.x)/float64(sw), float64(p.y)/float64(sh)
-		return nx, ny, nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1
+	w.mu.Lock()
+	d := w.disp
+	w.mu.Unlock()
+	if d.W <= 0 { // no display list: the primary monitor
+		sw, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
+		sh, _, _ := procGetSystemMetrics.Call(1)
+		d = Display{W: float64(sw), H: float64(sh)}
 	}
+	norm := func(p winPoint) (float64, float64, bool) { return d.toDisplay(float64(p.x), float64(p.y)) }
 	gti := guiThreadInfo{}
 	gti.cbSize = uint32(unsafe.Sizeof(gti))
 	if r, _, _ := procGetGUIThreadInfo.Call(0, uintptr(unsafe.Pointer(&gti))); r != 0 && gti.hwndCaret != 0 {

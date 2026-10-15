@@ -122,6 +122,8 @@
           <option value="sharp">Nét · 1080p 60fps</option>
           <option value="max">Tối đa · gốc</option>
         </select>
+        <!-- Agent 0.2.6+ with 2+ displays: which one to watch / control. -->
+        <select id="sel-screen" title="Màn hình đang xem" hidden></select>
         <select id="sel-zoom" title="Zoom">
           <option value="fit">🔍 Vừa khung</option>
           <option value="width">🔍 Vừa chiều ngang</option>
@@ -160,6 +162,7 @@
           <option value="restart-agent">Khởi động lại agent</option>
           <option value="update-agent">Cập nhật agent</option>
         </select>
+        <button id="btn-audio" title="Nghe âm thanh của máy kia" hidden><span class="ico">🔇</span><span class="menu-label"> Âm thanh: tắt</span></button>
         <button id="btn-files" title="Chuyển file">📁<span class="menu-label"> Chuyển file</span></button>
         <button id="btn-fs" title="Toàn màn hình (khoá phím hệ thống)">⛶<span class="menu-label"> Toàn màn hình</span></button>
         <button id="btn-help" class="menu-only" title="Cách dùng cảm ứng">❔ Cử chỉ cảm ứng</button>

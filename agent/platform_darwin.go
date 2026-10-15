@@ -42,31 +42,36 @@ func restartSelf() { os.Exit(0) }
 func platformEncoders() []string { return []string{"h264_videotoolbox", "libx264"} }
 
 var (
-	screenIdxOnce sync.Once
-	screenIdx     []string
+	screenIdxMu sync.Mutex
+	screenIdx   []string
 )
 
-// avfoundationScreens lists ffmpeg's "Capture screen N" device indices in display order.
-func avfoundationScreens(ff string) []string {
-	screenIdxOnce.Do(func() {
-		cmd := exec.Command(ff, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", "")
-		var out bytes.Buffer
-		cmd.Stderr = &out
-		_ = cmd.Run()
-		re := regexp.MustCompile(`\[(\d+)\] Capture screen (\d+)`)
-		for _, m := range re.FindAllStringSubmatch(out.String(), -1) {
-			screenIdx = append(screenIdx, m[1])
-		}
-		log.Printf("avfoundation screens: %v", screenIdx)
-	})
+// avfoundationScreens lists ffmpeg's "Capture screen N" device indices in
+// display order, asking ffmpeg again when the number of displays changed.
+func avfoundationScreens(ff string, displays int) []string {
+	screenIdxMu.Lock()
+	defer screenIdxMu.Unlock()
+	if screenIdx != nil && len(screenIdx) == displays {
+		return screenIdx
+	}
+	cmd := exec.Command(ff, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", "")
+	var out bytes.Buffer
+	cmd.Stderr = &out
+	_ = cmd.Run()
+	re := regexp.MustCompile(`\[(\d+)\] Capture screen (\d+)`)
+	screenIdx = []string{}
+	for _, m := range re.FindAllStringSubmatch(out.String(), -1) {
+		screenIdx = append(screenIdx, m[1])
+	}
+	log.Printf("avfoundation screens: %v", screenIdx)
 	return screenIdx
 }
 
 func platformPipelines(ff string, cfg *Config, encoders []string, sp StreamParams) []pipeline {
-	screens := avfoundationScreens(ff)
+	screens := avfoundationScreens(ff, len(listDisplays()))
 	dev := "1"
-	if cfg.Display < len(screens) {
-		dev = screens[cfg.Display]
+	if i := sp.disp.capIdx; i >= 0 && i < len(screens) {
+		dev = screens[i]
 	} else if len(screens) > 0 {
 		dev = screens[0]
 	}

@@ -16,6 +16,25 @@ const IS_MAC_VIEWER = /Mac|iPhone|iPad/.test(navigator.platform || navigator.use
 // Phone-sized window: the less used toolbar items move into the ⋯ menu (style.css).
 const COMPACT = matchMedia('(max-width: 900px), (max-height: 500px)');
 
+// Remote sound needs WebCodecs Opus decoding (relay path) and Web Audio.
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioOk = false;
+if ('AudioDecoder' in window && AudioCtx) {
+  AudioDecoder.isConfigSupported({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 })
+    .then((r) => { audioOk = !!r.supported; updateAudioButton(); })
+    .catch(() => {});
+}
+
+// "0.2.10" ≥ "0.2.6"
+function verAtLeast(v, min) {
+  const a = String(v || '').split('.').map(Number), b = min.split('.').map(Number);
+  for (let i = 0; i < b.length; i++) {
+    const x = a[i] || 0;
+    if (x !== b[i]) return x > b[i];
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------- prefs (per browser)
 
 const prefs = (() => {
@@ -173,9 +192,21 @@ function startSession(id) {
     p2pFails: 0,
     pendingCands: [],
     p2pStats: null, // { bytes, at } of the last getStats sample
+    p2pAudio: null, // <audio> playing the P2P Opus track
+    // Displays of the remote machine (agent 0.2.6+, from "info").
+    screens: null,
+    screen: 0,
+    screenSynced: false, // the remembered choice was applied for this connection
+    // Remote sound: off until 🔇 is clicked; relay packets are decoded into
+    // Web Audio (S.audio), the P2P track plays in S.p2pAudio.
+    agentAudio: false,
+    audioOn: false,
+    audio: null,
   };
   $('chk-p2p').checked = prefs.get('p2p', true);
   $('chk-p2p').parentElement.hidden = !P2P_SUPPORTED;
+  renderScreens();
+  updateAudioButton();
   updateMode();
   $('sel-quality').value = prefs.get('quality', 'balanced');
   $('sess-name').textContent = id;
@@ -192,6 +223,7 @@ function stopSession() {
   clearInterval(S.statsTimer);
   stopP2P(null);
   filesReset();
+  closeAudio();
   try { S.ws && S.ws.close(); } catch { /* ignore */ }
   closeDecoder();
   if (S.latest) S.latest.close();
@@ -216,8 +248,10 @@ function connect() {
   S.waitingKey = true;
   ws.onmessage = (ev) => {
     if (!S || S.ws !== ws) return;
-    if (typeof ev.data === 'string') onControl(JSON.parse(ev.data));
-    else if (new Uint8Array(ev.data, 0, 1)[0] === 2) onFileData(ev.data); // files.js
+    if (typeof ev.data === 'string') { onControl(JSON.parse(ev.data)); return; }
+    const type = new Uint8Array(ev.data, 0, 1)[0];
+    if (type === 2) onFileData(ev.data); // files.js
+    else if (type === 3) onAudio(ev.data);
     else onVideo(ev.data);
   };
   ws.onclose = (ev) => {
@@ -264,6 +298,8 @@ function onControl(m) {
       fitCanvas();
       $('key-meta').textContent = m.agent.os === 'darwin' ? '⌘' : 'Win';
       setOverlay('Đang chờ hình ảnh…');
+      S.screenSynced = false; // the agent may have restarted on its default display
+      if (S.audioOn) sendNow({ t: 'audio', on: true }); // a new relay connection starts silent
       startP2P();
       break;
     }
@@ -283,6 +319,7 @@ function onControl(m) {
       break;
     case 'info':
       $('sess-stats').dataset.enc = m.enc || '';
+      onInfo(m);
       break;
     case 'clip':
       S.lastClip = m.text;
@@ -397,6 +434,8 @@ async function startP2P() {
   dc.onopen = () => { if (S && S.pc === pc) S.dc = dc; };
   dc.onclose = () => { if (S && S.dc === dc) S.dc = null; };
   pc.addTransceiver('video', { direction: 'recvonly' });
+  // Agents before 0.2.6 have no audio; an offer without it keeps them simple.
+  if (S.agent && verAtLeast(S.agent.ver, '0.2.6')) pc.addTransceiver('audio', { direction: 'recvonly' });
 
   // The <video> only decodes; frames are copied onto the canvas so zoom,
   // pointer mapping and touch handling stay the same as on the relay path.
@@ -418,7 +457,15 @@ async function startP2P() {
   video.requestVideoFrameCallback(onVideoFrame);
 
   pc.ontrack = (e) => {
-    // Render as soon as a frame decodes; there is no audio to sync with.
+    if (e.track.kind === 'audio') {
+      const el = new Audio();
+      el.autoplay = false;
+      el.srcObject = new MediaStream([e.track]);
+      S.p2pAudio = el;
+      syncP2PAudio();
+      return;
+    }
+    // Render as soon as a frame decodes; sound is not lip-synced to it.
     try { e.receiver.jitterBufferTarget = 0; } catch { /* older browsers */ }
     try { e.receiver.playoutDelayHint = 0; } catch { /* non-Chrome */ }
     video.srcObject = new MediaStream([e.track]);
@@ -473,6 +520,7 @@ function goLive() {
   sendNow({ t: 'p2p', on: true });
   closeDecoder();
   if (S.latest) { S.latest.close(); S.latest = null; }
+  syncP2PAudio();
   console.info('P2P: video now direct');
 }
 
@@ -488,6 +536,7 @@ function stopP2P(reason) {
   S.p2pStats = null;
   if (S.pc) { try { S.pc.close(); } catch { /* ignore */ } S.pc = null; }
   if (S.video) { S.video.srcObject = null; S.video.remove(); S.video = null; }
+  if (S.p2pAudio) { S.p2pAudio.pause(); S.p2pAudio.srcObject = null; S.p2pAudio = null; }
   if (wasLive) {
     S.waitingKey = true;
     sendNow({ t: 'p2p', on: false }); // relay resends a keyframe
@@ -520,6 +569,169 @@ async function p2pStats() {
   const kbps = prev ? Math.round(((bytes - prev.bytes) * 8) / (now - prev.at)) : 0;
   return { kbps, rtt, kind };
 }
+
+// ---------------------------------------------------------------- displays (agent 0.2.6+)
+
+function onInfo(m) {
+  S.agentAudio = !!m.audio;
+  updateAudioButton();
+  if (!Array.isArray(m.screens)) return; // older agent: one display, no choice
+  const switched = S.switching != null && m.screen === S.switching;
+  S.screens = m.screens;
+  S.screen = m.screen | 0;
+  renderScreens();
+  if (switched) { S.switching = null; setOverlay(''); }
+  if (S.screenSynced || !S.agent) return;
+  S.screenSynced = true;
+  // Back to the display chosen last time on this machine (matched by name:
+  // the order can change when monitors are plugged in or out).
+  const want = prefs.get(`screen:${S.agent.id}`, null);
+  if (!want || S.screens.length < 2) return;
+  let i = S.screens[want.i] && S.screens[want.i].name === want.name ? want.i : S.screens.findIndex((d) => d.name === want.name);
+  if (i < 0 && want.i < S.screens.length) i = want.i;
+  if (i >= 0 && i !== S.screen) chooseScreen(i, false);
+}
+
+function renderScreens() {
+  const sel = $('sel-screen');
+  const list = S && S.screens;
+  sel.hidden = !list || list.length < 2;
+  if (sel.hidden) return;
+  sel.replaceChildren(...list.map((d, i) => {
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = `🖥 ${i + 1}. ${d.name} · ${d.w}×${d.h}${d.primary ? ' (chính)' : ''}`;
+    return o;
+  }));
+  sel.value = String(S.screen);
+}
+
+function chooseScreen(i, remember) {
+  if (!S || !S.screens || !S.screens[i]) return;
+  if (remember && S.agent) prefs.set(`screen:${S.agent.id}`, { i, name: S.screens[i].name });
+  if (i === S.screen) return;
+  S.switching = i;
+  setOverlay(`Đang chuyển sang màn hình ${i + 1}…`);
+  sendNow({ t: 'screen', i });
+  // An agent that cannot switch would leave the overlay up: give up quietly.
+  setTimeout(() => { if (S && S.switching === i) { S.switching = null; setOverlay(''); renderScreens(); } }, 8000);
+}
+
+$('sel-screen').onchange = (e) => {
+  chooseScreen(Number(e.target.value), true);
+  stage.focus();
+};
+
+// ---------------------------------------------------------------- remote sound (agent 0.2.6+)
+// Relay path: Opus packets (binary type 3) → WebCodecs AudioDecoder → short
+// AudioBuffers scheduled back to back on a Web Audio clock. P2P path: the
+// Opus track of the peer connection plays in an <audio> element.
+
+function updateAudioButton() {
+  const b = $('btn-audio');
+  b.hidden = !(S && audioOk && S.agentAudio);
+  const on = !!(S && S.audioOn);
+  b.querySelector('.ico').textContent = on ? '🔊' : '🔇';
+  b.querySelector('.menu-label').textContent = on ? ' Âm thanh: bật' : ' Âm thanh: tắt';
+  b.title = on ? 'Tắt âm thanh của máy kia' : 'Nghe âm thanh của máy kia';
+  b.classList.toggle('on', on);
+}
+
+function setAudio(on) {
+  if (!S) return;
+  if (on && !S.audio) {
+    let ctx;
+    try { ctx = new AudioCtx({ latencyHint: 'interactive', sampleRate: 48000 }); } catch { ctx = new AudioCtx(); }
+    ctx.resume().catch(() => {}); // inside the click: allowed to start
+    const a = { ctx, dec: null, playhead: 0, trim: 0, minAhead: undefined, winEnd: 0 };
+    a.dec = new AudioDecoder({
+      output: (d) => playAudio(a, d),
+      error: (e) => console.warn('audio decoder', e),
+    });
+    a.dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
+    S.audio = a;
+  } else if (!on) {
+    closeAudio();
+  }
+  S.audioOn = on;
+  sendNow({ t: 'audio', on });
+  syncP2PAudio();
+  updateAudioButton();
+}
+
+function closeAudio() {
+  const a = S && S.audio;
+  if (!a) return;
+  S.audio = null;
+  try { if (a.dec.state !== 'closed') a.dec.close(); } catch { /* ignore */ }
+  a.ctx.close().catch(() => {});
+}
+
+function onAudio(buf) {
+  const a = S.audio;
+  if (!a || !S.audioOn || a.dec.state !== 'configured' || buf.byteLength <= 6) return;
+  if (S.p2pLive && S.p2pAudio) return; // stray relay packets after the switch to P2P
+  const ts = new DataView(buf).getUint32(2);
+  try {
+    a.dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: ts * 1000, data: new Uint8Array(buf, 6) }));
+  } catch (e) {
+    console.warn('audio decode', e);
+  }
+}
+
+// Each 20 ms plays right after the previous one, ~60 ms behind real time
+// (room for network jitter). Running dry restarts that margin. A queue that
+// stayed above 100 ms for a whole second (the burst at start, a connection
+// catching up after a stall) is trimmed back by dropping packets.
+function playAudio(a, d) {
+  if (!S || S.audio !== a) { d.close(); return; }
+  const ctx = a.ctx;
+  const now = ctx.currentTime;
+  const ahead = a.playhead - now;
+  if (ahead > 0) a.minAhead = Math.min(a.minAhead ?? ahead, ahead);
+  if (!a.winEnd || now >= a.winEnd) {
+    if (a.minAhead > 0.1) a.trim = Math.round((a.minAhead - 0.06) / 0.02);
+    a.minAhead = undefined;
+    a.winEnd = now + 1;
+  }
+  if ((a.trim > 0 && ahead > 0.04) || ahead > 0.3) { a.trim--; d.close(); return; }
+  const n = d.numberOfFrames, ch = d.numberOfChannels;
+  const buf = ctx.createBuffer(ch, n, d.sampleRate);
+  try {
+    for (let c = 0; c < ch; c++) {
+      const plane = new Float32Array(n);
+      d.copyTo(plane, { planeIndex: c, format: 'f32-planar' });
+      buf.copyToChannel(plane, c);
+    }
+  } catch (e) {
+    console.warn('audio copy', e);
+    d.close();
+    return;
+  }
+  d.close();
+  if (ahead < 0.01) a.playhead = now + 0.06;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  src.start(a.playhead);
+  a.playhead += buf.duration;
+}
+
+// The P2P track is audible only while video also comes P2P (the relay stops
+// sending sound to this viewer then) and sound is on.
+function syncP2PAudio() {
+  const el = S && S.p2pAudio;
+  if (!el) return;
+  const on = S.audioOn && S.p2pLive;
+  el.muted = !on;
+  if (on) el.play().catch((e) => console.warn('p2p audio', e));
+  else el.pause();
+}
+
+$('btn-audio').onclick = () => {
+  setAudio(!(S && S.audioOn));
+  stage.focus();
+};
 
 // Zoom: 'fit' (whole screen visible), 'width' (fill horizontally, scroll
 // vertically) or a fixed factor where 1 = one remote pixel per CSS pixel.

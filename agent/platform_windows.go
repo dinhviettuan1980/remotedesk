@@ -88,27 +88,27 @@ func platformEncoders() []string {
 	return []string{"h264_nvenc", "h264_qsv", "h264_amf", "libx264"}
 }
 
-func primarySize() (int, int) {
-	w, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
-	h, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
-	return int(w), int(h)
-}
-
 func platformPipelines(ff string, cfg *Config, encoders []string, sp StreamParams) []pipeline {
 	fps := strconv.Itoa(sp.FPS)
+	d := sp.disp
 	dda := func(enc string) pipeline {
 		return pipeline{
 			capture: "ddagrab", encoder: enc,
-			input:  []string{"-f", "lavfi", "-i", fmt.Sprintf("ddagrab=output_idx=%d:framerate=%s:draw_mouse=1", cfg.Display, fps)},
+			input:  []string{"-f", "lavfi", "-i", fmt.Sprintf("ddagrab=output_idx=%d:framerate=%s:draw_mouse=1", d.capIdx, fps)},
 			filter: "hwdownload,format=bgra",
 		}
 	}
 	gdi := func(enc string) pipeline {
-		w, h := primarySize()
+		x, y, w, h := int(d.X), int(d.Y), d.PxW, d.PxH
+		if w <= 0 || h <= 0 { // no display list: the primary monitor
+			sw, _, _ := procGetSystemMetrics.Call(0)
+			sh, _, _ := procGetSystemMetrics.Call(1)
+			x, y, w, h = 0, 0, int(sw), int(sh)
+		}
 		return pipeline{
 			capture: "gdigrab", encoder: enc,
 			input: []string{"-f", "gdigrab", "-framerate", fps, "-draw_mouse", "1",
-				"-offset_x", "0", "-offset_y", "0", "-video_size", fmt.Sprintf("%dx%d", w, h), "-i", "desktop"},
+				"-offset_x", strconv.Itoa(x), "-offset_y", strconv.Itoa(y), "-video_size", fmt.Sprintf("%dx%d", w, h), "-i", "desktop"},
 		}
 	}
 	var out []pipeline
@@ -117,6 +117,9 @@ func platformPipelines(ff string, cfg *Config, encoders []string, sp StreamParam
 		captures = []string{cfg.Capture}
 	}
 	for _, c := range captures {
+		if c == "ddagrab" && d.capIdx < 0 {
+			continue // a monitor on another GPU: ddagrab only sees the default adapter
+		}
 		for _, enc := range encoders {
 			if c == "ddagrab" {
 				out = append(out, dda(enc))

@@ -11,6 +11,8 @@ type Injector interface {
 	Key(code string, down bool)
 	ReleaseAll()
 	Wake() // nudge the display awake
+	// SetDisplay: the display being captured (mouse moves and FocusedEdit map onto it).
+	SetDisplay(d Display)
 	// FocusedEdit: is the keyboard focus in a text field, and where is its caret
 	// (normalized over the captured display; pos false when unknown).
 	FocusedEdit() (edit bool, x, y float64, pos bool)

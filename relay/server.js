@@ -27,6 +27,12 @@
 //                  agent replies carrying "to" go to that viewer only.
 // Binary type 2 = file data. Viewer → agent [2][id u32][…] is forwarded as
 // [2][vid u32][id u32][…]; agent → viewer [2][vid u32][…] goes to that viewer.
+// Binary type 3 = audio (agent 0.2.6+): [3][0][ts u32][Opus packet, 20 ms].
+//   {"t":"audio","on":bool} from a viewer turns its sound on/off; the relay
+//   tells the agent {"t":"audio","vids":[…],"ws":bool}: who wants sound (their
+//   P2P peers get an Opus track) and whether anyone needs it over the relay.
+//   Type 3 goes only to viewers with sound on that are not on P2P.
+//   {"t":"screen","i":N} (viewer → agent) picks the display; forwarded as is.
 
 const http = require('http');
 const fs = require('fs');
@@ -473,6 +479,7 @@ function onAgent(ws, url, ip, tenant) {
     gopBytes: 0,
     lastInfo: null,
     wsOn: true, // agent sends video to the relay (it starts that way on every join)
+    audioKey: '', // last {"t":"audio"} state sent to the agent
   };
   const old = agents.get(key);
   if (old) {
@@ -490,7 +497,7 @@ function onAgent(ws, url, ip, tenant) {
   console.log(`agent up: ${key} (${agent.name}, ${agent.os} ${agent.ver}) from ${ip}`);
   sendJson(ws, { t: 'ice', servers: iceServers(`a-${tenant.id}`) });
   const iceTimer = setInterval(() => sendJson(ws, { t: 'ice', servers: iceServers(`a-${tenant.id}`) }), (TURN_TTL / 2) * 1000);
-  if (agent.viewers.size) sendJson(ws, { t: 'join', ...agent.params });
+  if (agent.viewers.size) { sendJson(ws, { t: 'join', ...agent.params }); updateAudio(agent); }
 
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (data, isBinary) => {
@@ -516,6 +523,13 @@ function onAgent(ws, url, ip, tenant) {
     if (data[0] === 2 && data.length >= 5) { // file data for one viewer
       const vid = data.readUInt32BE(1);
       for (const v of agent.viewers) if (v.vid === vid && v.ws.readyState === v.ws.OPEN) v.ws.send(data, { binary: true });
+      return;
+    }
+    if (data[0] === 3) { // audio: listeners on the relay path (P2P ones get the WebRTC track)
+      for (const v of agent.viewers) {
+        // Small and droppable: skip a viewer whose socket is backed up.
+        if (v.audio && !v.p2p && v.ws.readyState === v.ws.OPEN && v.ws.bufferedAmount < RESUME_BYTES) v.ws.send(data, { binary: true });
+      }
       return;
     }
     for (const v of agent.viewers) if (v.ws.readyState === v.ws.OPEN) v.ws.send(data, { binary: true });
@@ -555,6 +569,16 @@ function updateWsVideo(agent) {
   sendJson(agent.ws, { t: 'wsvideo', on: need });
 }
 
+// Tell the agent who wants sound and whether it must also go over the relay.
+function updateAudio(agent) {
+  const vids = [...agent.viewers].filter((v) => v.audio).map((v) => v.vid);
+  const ws = [...agent.viewers].some((v) => v.audio && !v.p2p);
+  const key = `${vids.join(',')}|${ws}`;
+  if (key === agent.audioKey) return;
+  agent.audioKey = key;
+  sendJson(agent.ws, { t: 'audio', vids, ws });
+}
+
 // Bring one viewer up to date: the cached keyframe + deltas since then.
 function replayGop(agent, v) {
   v.dropping = false;
@@ -567,7 +591,7 @@ function onViewer(ws, url, ip, tenant) {
   const agent = agents.get(key);
   if (!agent) return ws.close(4404, 'agent offline');
   const num = (k, d, lo, hi) => Math.min(hi, Math.max(lo, Number(url.searchParams.get(k)) || d));
-  const viewer = { ws, vid: ++viewerSeq, dropping: false, dropped: 0, p2p: false };
+  const viewer = { ws, vid: ++viewerSeq, dropping: false, dropped: 0, p2p: false, audio: false };
   const params = { fps: num('fps', 30, 5, 60), maxw: num('maxw', 1920, 640, 3840), kbps: num('kbps', 3000, 300, 20000) };
   const first = agent.viewers.size === 0;
   agent.viewers.add(viewer);
@@ -612,6 +636,12 @@ function onViewer(ws, url, ip, tenant) {
           if (a.gop.length) replayGop(a, viewer); else sendJson(a.ws, { t: 'kf' });
         }
         updateWsVideo(a);
+        updateAudio(a);
+        return;
+      }
+      if (text.startsWith('{"t":"audio"')) {
+        try { viewer.audio = JSON.parse(text).on === true; } catch { return; }
+        updateAudio(a);
         return;
       }
       if (text.startsWith('{"t":"cfg"')) {
@@ -634,9 +664,11 @@ function onViewer(ws, url, ip, tenant) {
     if (a.viewers.size === 0) {
       a.gop = []; a.gopBytes = 0;
       a.wsOn = true; // the agent resets to relay video on the next join
+      a.audioKey = ''; // …and forgets who wanted sound
       sendJson(a.ws, { t: 'leave' });
     } else {
       updateWsVideo(a);
+      updateAudio(a);
     }
   });
   ws.on('error', () => {});

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,9 +36,9 @@ var (
 	rtcAPIErr  error
 )
 
-// newRTCAPI registers only H.264 (what ffmpeg produces). The encoder emits
-// High profile; Constrained Baseline is listed too so a browser that only
-// offers that still connects (decoders accept the higher profile in practice).
+// newRTCAPI registers H.264 (what ffmpeg produces) and Opus (audio.go). The
+// encoder emits High profile; Constrained Baseline is listed too so a browser
+// that only offers that still connects (decoders accept the higher profile in practice).
 func newRTCAPI() (*webrtc.API, error) {
 	rtcAPIOnce.Do(func() {
 		m := &webrtc.MediaEngine{}
@@ -56,6 +57,17 @@ func newRTCAPI() (*webrtc.API, error) {
 				return
 			}
 		}
+		err := m.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2,
+				SDPFmtpLine: "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1",
+			},
+			PayloadType: 111,
+		}, webrtc.RTPCodecTypeAudio)
+		if err != nil {
+			rtcAPIErr = err
+			return
+		}
 		// NACK generator/responder, RTCP reports, TWCC header extension.
 		reg := &interceptor.Registry{}
 		if err := webrtc.RegisterDefaultInterceptors(m, reg); err != nil {
@@ -72,6 +84,10 @@ type peer struct {
 	pc     *webrtc.PeerConnection
 	track  *webrtc.TrackLocalStaticSample
 	frames chan p2pFrame
+	// Opus track, when the viewer's offer has an audio section (viewers that
+	// know agent 0.2.6+); packets flow only while that viewer has 🔊 on.
+	audio       *webrtc.TrackLocalStaticSample
+	audioFrames chan []byte
 
 	// guarded by Agent.mu
 	connected bool
@@ -151,6 +167,21 @@ func (a *Agent) answerPeer(vid int, offer webrtc.SessionDescription) error {
 		return err
 	}
 	p := &peer{vid: vid, pc: pc, track: track, frames: make(chan p2pFrame, 30), waitKey: true, since: time.Now()}
+	if strings.Contains(offer.SDP, "m=audio") {
+		at, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, "audio", "remotedesk")
+		if err != nil {
+			pc.Close()
+			return err
+		}
+		as, err := pc.AddTrack(at)
+		if err != nil {
+			pc.Close()
+			return err
+		}
+		p.audio, p.audioFrames = at, make(chan []byte, 25)
+		go drainRTCP(as)
+		go p.audioLoop()
+	}
 
 	go a.readRTCP(p, sender)
 	go p.writeLoop()
@@ -235,6 +266,22 @@ func (a *Agent) readRTCP(p *peer, sender *webrtc.RTPSender) {
 	}
 }
 
+func drainRTCP(s *webrtc.RTPSender) {
+	for {
+		if _, _, err := s.ReadRTCP(); err != nil {
+			return
+		}
+	}
+}
+
+func (p *peer) audioLoop() {
+	for pkt := range p.audioFrames {
+		if err := p.audio.WriteSample(media.Sample{Data: pkt, Duration: 20 * time.Millisecond}); err != nil {
+			log.Printf("p2p[%d]: audio: %v", p.vid, err)
+		}
+	}
+}
+
 func (p *peer) writeLoop() {
 	var last time.Time
 	for f := range p.frames {
@@ -293,6 +340,9 @@ func (a *Agent) closePeerIf(p *peer) {
 		delete(a.peers, p.vid)
 	}
 	close(p.frames)
+	if p.audioFrames != nil {
+		close(p.audioFrames)
+	}
 	a.mu.Unlock()
 	go p.pc.Close() // may block briefly on DTLS close; never hold up the read loop
 }

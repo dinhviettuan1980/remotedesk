@@ -45,6 +45,11 @@ type Agent struct {
 	t0       time.Time
 	clip     *clipSync
 	awake    func() // stops keep-awake
+	screen   int    // display to capture (index into listDisplays; the viewer's 🖥 choice)
+
+	audio     *audioSession // running while some viewer wants sound (audio.go)
+	audioVids map[int]bool  // viewers that want sound
+	wsAudio   bool          // some of them get it over the relay (the rest via P2P)
 
 	editMu    sync.Mutex // text-field check after clicks / keys (checkEdit)
 	editTimer *time.Timer
@@ -52,7 +57,8 @@ type Agent struct {
 }
 
 func newAgent(cfg *Config, ff string) *Agent {
-	return &Agent{cfg: cfg, ff: ff, input: newInjector(cfg.Display), t0: time.Now()}
+	go audioAvailable(ff) // probe the Opus encoder now, not when the first viewer joins
+	return &Agent{cfg: cfg, ff: ff, input: newInjector(), screen: cfg.Display, t0: time.Now()}
 }
 
 func (a *Agent) wsURL() (string, error) {
@@ -202,6 +208,33 @@ func (a *Agent) sendFrame(au []byte, key bool) {
 	a.out <- outMsg{websocket.BinaryMessage, msg}
 }
 
+// sendAudio hands one Opus packet to the P2P peers that want sound and, if
+// some listener is on the relay, queues it there (binary type 3).
+func (a *Agent) sendAudio(pkt []byte) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.viewer {
+		return
+	}
+	for _, p := range a.peers {
+		if p.connected && !p.closed && p.audioFrames != nil && a.audioVids[p.vid] {
+			select {
+			case p.audioFrames <- pkt:
+			default:
+			}
+		}
+	}
+	// Video has priority on a congested uplink; a lost 20 ms of sound is a click.
+	if a.out == nil || !a.wsAudio || len(a.out) > 30 {
+		return
+	}
+	msg := make([]byte, 6+len(pkt))
+	msg[0] = 3
+	binary.BigEndian.PutUint32(msg[2:], uint32(time.Since(a.t0).Milliseconds()))
+	copy(msg[6:], pkt)
+	a.out <- outMsg{websocket.BinaryMessage, msg}
+}
+
 // ---------------------------------------------------------------- inbound
 
 type inMsg struct {
@@ -229,6 +262,10 @@ type inMsg struct {
 	Paths []string `json:"paths"`
 	// relay → agent
 	Servers []webrtc.ICEServer `json:"servers"`
+	Vids    []int              `json:"vids"` // "audio": viewers that want sound
+	WS      bool               `json:"ws"`   // "audio": some of them are on the relay
+	// viewer → agent
+	I int `json:"i"` // "screen": display index
 }
 
 // handleInput is the entry point for the P2P data channel: input only, no
@@ -336,6 +373,25 @@ func (a *Agent) handle(data []byte) {
 		if turnOn {
 			a.wantKeyframe("relay video on")
 		}
+	case "screen":
+		a.mu.Lock()
+		a.screen = m.I
+		sp := a.params
+		viewer := a.viewer
+		a.mu.Unlock()
+		log.Printf("viewer chose display %d", m.I)
+		if viewer {
+			a.restart(sp)
+		}
+	case "audio":
+		a.mu.Lock()
+		a.audioVids = map[int]bool{}
+		for _, v := range m.Vids {
+			a.audioVids[v] = true
+		}
+		a.wsAudio = m.WS
+		a.mu.Unlock()
+		a.syncAudio()
 	case "ice":
 		if len(m.Servers) > 0 {
 			a.mu.Lock()
@@ -402,6 +458,7 @@ func (a *Agent) join(sp StreamParams) {
 	a.mu.Unlock()
 	a.input.Wake()
 	a.restart(sp)
+	a.syncAudio()
 }
 
 func (a *Agent) restart(sp StreamParams) {
@@ -412,6 +469,7 @@ func (a *Agent) restart(sp StreamParams) {
 	a.lastKf = time.Now()
 	a.dropping = false
 	viewer := a.viewer
+	screen := a.screen
 	a.mu.Unlock()
 	if old != nil {
 		old.Stop()
@@ -419,10 +477,21 @@ func (a *Agent) restart(sp StreamParams) {
 	if !viewer {
 		return
 	}
+	displays := listDisplays()
+	disp, idx := pickDisplay(displays, screen)
+	sp.disp = disp
+	a.inMu.Lock()
+	a.input.SetDisplay(disp)
+	a.inMu.Unlock()
+	// Displays and audio go out now, not only once capture works: a display
+	// that cannot be captured must not hide the way to pick another one.
+	info := map[string]any{"t": "info", "os": runtime.GOOS, "screens": screenInfos(displays), "screen": idx, "audio": audioAvailable(a.ff)}
+	a.sendJSON(info)
 	s := startSession(a.ff, a.cfg, sp, a.sendFrame,
 		func(p pipeline) {
-			log.Printf("streaming with %s", p)
-			a.sendJSON(map[string]any{"t": "info", "os": runtime.GOOS, "enc": p.encoder, "capture": p.capture})
+			log.Printf("streaming display %d (%s, %dx%d) with %s", idx, disp.Name, disp.PxW, disp.PxH, p)
+			info["enc"], info["capture"] = p.encoder, p.capture
+			a.sendJSON(info)
 		},
 		func(err error) {
 			log.Printf("capture failed: %v", err)
@@ -449,7 +518,9 @@ func (a *Agent) leave() {
 	a.awake = nil
 	clip := a.clip
 	a.clip = nil
+	a.audioVids = nil
 	a.mu.Unlock()
+	a.syncAudio()
 	if s != nil {
 		s.Stop()
 	}
@@ -467,6 +538,44 @@ func (a *Agent) leave() {
 	if wasViewer {
 		log.Printf("viewer left")
 	}
+}
+
+// syncAudio starts or stops the audio capture to match audioVids.
+func (a *Agent) syncAudio() {
+	a.mu.Lock()
+	want := a.viewer && len(a.audioVids) > 0
+	running := a.audio
+	if !want {
+		a.audio = nil
+	}
+	a.mu.Unlock()
+	if !want {
+		if running != nil {
+			running.Stop()
+			log.Printf("audio off")
+		}
+		return
+	}
+	if running != nil {
+		return
+	}
+	if !audioAvailable(a.ff) {
+		a.sendJSON(map[string]string{"t": "notice", "msg": "Máy này không gửi được âm thanh (cần macOS 13+, hoặc ffmpeg có Opus)."})
+		return
+	}
+	s := startAudio(a.ff, a.sendAudio, func(err error) {
+		a.sendJSON(map[string]string{"t": "notice", "msg": "Không thu được âm thanh — đang thử lại…\n" + err.Error()})
+	})
+	a.mu.Lock()
+	if a.audio == nil && a.viewer && len(a.audioVids) > 0 {
+		a.audio, s = s, nil
+	}
+	a.mu.Unlock()
+	if s != nil { // turned off (or started twice) meanwhile
+		s.Stop()
+		return
+	}
+	log.Printf("audio on")
 }
 
 // ---------------------------------------------------------------- clipboard
