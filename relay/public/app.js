@@ -1367,7 +1367,18 @@ $('sel-keys').onchange = (e) => {
 if (window.rdNative ? !window.rdNative.fullscreen : !$('session').requestFullscreen) $('btn-fs').hidden = true;
 
 $('btn-fs').onclick = async () => {
-  if (window.rdNative) { window.rdNative.fullscreen(); stage.focus(); return; } // desktop app window
+  if (window.rdNative) { // desktop app window
+    window.rdNative.fullscreen();
+    stage.focus();
+    if (window.rdNative.platform === 'windows' && !window.rdNative.keys) { // app from before 2026-10-15
+      const hint = $('fs-hint');
+      hint.textContent = 'App RemoteDesk này là bản cũ: phím Windows / Alt+Tab chưa gửi sang máy kia.\nCài lại bản "Agent + App" từ trang chủ để cập nhật.';
+      hint.hidden = false;
+      clearTimeout(fsHintTimer);
+      fsHintTimer = setTimeout(() => { hint.hidden = true; }, 8000);
+    }
+    return;
+  }
   if (document.fullscreenElement) { await document.exitFullscreen(); return; }
   if (!$('session').requestFullscreen) return; // iPhone Safari: no Fullscreen API
   await $('session').requestFullscreen();
