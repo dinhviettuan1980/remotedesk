@@ -21,6 +21,8 @@
 //                  The relay stops/resumes its copy and tells the agent
 //                  {"t":"wsvideo","on":bool} so the agent's uplink only carries
 //                  the relay stream while someone still needs it.
+//   {"t":"ice","servers":[…]} relay → agent (and "ice" in a viewer's hello):
+//                  STUN + short-lived TURN credentials for the P2P path.
 //   {"t":"f…",…}   file transfer (agent/files.go): stamped with "vid" like rtc;
 //                  agent replies carrying "to" go to that viewer only.
 // Binary type 2 = file data. Viewer → agent [2][id u32][…] is forwarded as
@@ -61,6 +63,24 @@ const RESUME_BYTES = 512 * 1024;
 const GOP_CACHE_BYTES = 12 * 1024 * 1024;
 
 const users = new Users(USERS_FILE, TOKEN);
+
+// TURN (coturn, scripts/setup-turn.sh): time-limited credentials per the
+// "REST API" scheme — username "<expiry>:<label>", password = HMAC-SHA1(secret,
+// username). Handed to viewers in "hello" and to agents as {"t":"ice"}.
+const TURN_SECRET = process.env.TURN_SECRET || '';
+const TURN_HOST = process.env.TURN_HOST || new URL(PUBLIC_URL).hostname;
+const TURN_TTL = 24 * 3600;
+const STUN = { urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] };
+
+function iceServers(label) {
+  if (!TURN_SECRET) return [STUN];
+  const username = `${Math.floor(Date.now() / 1000) + TURN_TTL}:${label}`;
+  const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
+  return [STUN, {
+    urls: [`turn:${TURN_HOST}:3478?transport=udp`, `turn:${TURN_HOST}:3478?transport=tcp`, `turns:${TURN_HOST}:5349?transport=tcp`],
+    username, credential,
+  }];
+}
 
 // ---------------------------------------------------------------- auth
 
@@ -468,6 +488,8 @@ function onAgent(ws, url, ip, tenant) {
   agents.set(key, agent);
   ws.isAlive = true;
   console.log(`agent up: ${key} (${agent.name}, ${agent.os} ${agent.ver}) from ${ip}`);
+  sendJson(ws, { t: 'ice', servers: iceServers(`a-${tenant.id}`) });
+  const iceTimer = setInterval(() => sendJson(ws, { t: 'ice', servers: iceServers(`a-${tenant.id}`) }), (TURN_TTL / 2) * 1000);
   if (agent.viewers.size) sendJson(ws, { t: 'join', ...agent.params });
 
   ws.on('pong', () => { ws.isAlive = true; });
@@ -499,6 +521,7 @@ function onAgent(ws, url, ip, tenant) {
     for (const v of agent.viewers) if (v.ws.readyState === v.ws.OPEN) v.ws.send(data, { binary: true });
   });
   ws.on('close', (code) => {
+    clearInterval(iceTimer);
     if (agents.get(key) !== agent) return; // replaced
     agents.delete(key);
     console.log(`agent down: ${key} (${code})`);
@@ -550,7 +573,7 @@ function onViewer(ws, url, ip, tenant) {
   agent.viewers.add(viewer);
   ws.isAlive = true;
   console.log(`viewer join: ${key} from ${ip} (${agent.viewers.size} watching)`);
-  sendJson(ws, { t: 'hello', agent: agentSummary(agent) });
+  sendJson(ws, { t: 'hello', agent: agentSummary(agent), ice: iceServers(`v-${tenant.id}`) });
   if (agent.lastInfo) ws.send(agent.lastInfo);
   if (first) {
     // Nobody was watching: start the agent's capture with this viewer's quality.

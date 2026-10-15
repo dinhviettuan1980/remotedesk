@@ -26,6 +26,7 @@ import (
 
 var errNotStreaming = errors.New("not streaming")
 
+// Used until the relay sends {"t":"ice"} (relays from before TURN never do).
 var iceServers = []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"}}}
 
 var (
@@ -125,13 +126,17 @@ func (a *Agent) answerPeer(vid int, offer webrtc.SessionDescription) error {
 	}
 	a.mu.Lock()
 	viewer := a.viewer
+	ice := a.ice
 	a.mu.Unlock()
 	if !viewer {
 		return errNotStreaming
 	}
+	if len(ice) == 0 {
+		ice = iceServers
+	}
 	a.closePeer(vid) // the viewer renegotiates from scratch after a failure
 
-	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers, BundlePolicy: webrtc.BundlePolicyMaxBundle})
+	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: ice, BundlePolicy: webrtc.BundlePolicyMaxBundle})
 	if err != nil {
 		return err
 	}

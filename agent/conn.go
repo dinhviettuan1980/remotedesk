@@ -41,6 +41,7 @@ type Agent struct {
 	lastKey  time.Time // last keyframe out of the encoder
 	peers    map[int]*peer
 	files    fileXfer
+	ice      []webrtc.ICEServer // from the relay: STUN + short-lived TURN credentials
 	t0       time.Time
 	clip     *clipSync
 	awake    func() // stops keep-awake
@@ -226,6 +227,8 @@ type inMsg struct {
 	Clip  bool     `json:"clip"`
 	Batch string   `json:"batch"`
 	Paths []string `json:"paths"`
+	// relay → agent
+	Servers []webrtc.ICEServer `json:"servers"`
 }
 
 // handleInput is the entry point for the P2P data channel: input only, no
@@ -332,6 +335,12 @@ func (a *Agent) handle(data []byte) {
 		log.Printf("relay video %s", map[bool]string{true: "on", false: "off (all viewers on P2P)"}[m.On])
 		if turnOn {
 			a.wantKeyframe("relay video on")
+		}
+	case "ice":
+		if len(m.Servers) > 0 {
+			a.mu.Lock()
+			a.ice = m.Servers
+			a.mu.Unlock()
 		}
 	case "rtc":
 		a.onRTC(m.Vid, m.SDP, m.Cand)

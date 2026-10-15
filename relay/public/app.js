@@ -9,6 +9,7 @@ const QUALITY = {
   sharp: { fps: 60, maxw: 1920, kbps: 8000 },
   max: { fps: 60, maxw: 3840, kbps: 16000 },
 };
+// Fallback; the relay's hello carries STUN + TURN (coturn on the VPS).
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 const P2P_SUPPORTED = 'RTCPeerConnection' in window && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 const IS_MAC_VIEWER = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -252,6 +253,7 @@ function onControl(m) {
   switch (m.t) {
     case 'hello': {
       S.agent = m.agent;
+      S.ice = m.ice || ICE_SERVERS;
       $('sess-name').textContent = m.agent.name;
       document.title = `${m.agent.name} — RemoteDesk`;
       const key = `swap:${m.agent.id}`;
@@ -388,7 +390,7 @@ function p2pWanted() {
 async function startP2P() {
   if (!S || S.pc || !p2pWanted() || !S.ws || S.ws.readyState !== WebSocket.OPEN) return;
   clearTimeout(S.p2pRetry);
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, bundlePolicy: 'max-bundle' });
+  const pc = new RTCPeerConnection({ iceServers: S.ice || ICE_SERVERS, bundlePolicy: 'max-bundle' });
   S.pc = pc;
   S.pendingCands = [];
   const dc = pc.createDataChannel('input', { ordered: true });
@@ -508,7 +510,9 @@ async function p2pStats() {
     rtt = pair.currentRoundTripTime;
     const local = report.get(localId);
     const remote = report.get(pair.remoteCandidateId);
-    kind = local && remote && local.candidateType === 'host' && remote.candidateType === 'host' ? 'LAN' : '';
+    if (local && remote && local.candidateType === 'host' && remote.candidateType === 'host') kind = 'LAN';
+    else if (local && remote && (local.candidateType === 'relay' || remote.candidateType === 'relay')) kind = 'TURN';
+    else kind = '';
   }
   const now = performance.now();
   const prev = S.p2pStats;
