@@ -244,24 +244,31 @@ func (a *Agent) answerPeer(vid int, offer webrtc.SessionDescription) error {
 	return nil
 }
 
-// readRTCP drains RTCP (required for the NACK responder) and turns picture
-// loss reports into keyframe requests.
+// readRTCP drains RTCP (required for the NACK responder). Picture loss reports
+// do not restart the encoder: on a lossy path (TURN through an office
+// firewall) that looped — restart, big keyframe sent as one UDP burst, more
+// loss, PLI again — froze every viewer and got the office link reset. The
+// browser picks up again at the next natural keyframe (≤ gopSeconds).
 func (a *Agent) readRTCP(p *peer, sender *webrtc.RTPSender) {
+	plis := 0
+	last := time.Now()
 	for {
 		pkts, _, err := sender.ReadRTCP()
 		if err != nil {
+			if plis > 0 {
+				log.Printf("p2p[%d]: %d picture loss reports", p.vid, plis)
+			}
 			return
 		}
 		for _, pkt := range pkts {
 			switch pkt.(type) {
 			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-				a.mu.Lock()
-				warm := time.Since(p.since) < 5*time.Second // browsers send PLI while the track starts up
-				a.mu.Unlock()
-				if !warm {
-					a.wantKeyframe("p2p PLI")
-				}
+				plis++
 			}
+		}
+		if plis > 0 && time.Since(last) > time.Minute {
+			log.Printf("p2p[%d]: %d picture loss reports in the last minute (path is losing packets)", p.vid, plis)
+			plis, last = 0, time.Now()
 		}
 	}
 }
