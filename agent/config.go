@@ -22,6 +22,34 @@ type Config struct {
 	Encoder string `json:"encoder,omitempty"` // "auto" or an ffmpeg encoder name
 	Capture string `json:"capture,omitempty"` // windows: "auto", "ddagrab" or "gdigrab"
 	Display int    `json:"display,omitempty"` // 0 = primary display
+	Notify  bool   `json:"notify,omitempty"`  // show a notice on this machine when someone starts watching
+}
+
+// saveConfigValue sets one key in config.json, keeping everything else (and
+// the file's permissions: on Windows its ACL protects the token).
+func saveConfigValue(path, key string, value any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	cfg := map[string]any{}
+	if err := json.Unmarshal(bytes.TrimPrefix(data, []byte("\xEF\xBB\xBF")), &cfg); err != nil {
+		return err
+	}
+	cfg[key] = value
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(out); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func loadConfig(explicit string) (*Config, string, error) {

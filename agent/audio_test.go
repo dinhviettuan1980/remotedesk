@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"image"
+	"image/color"
+	"image/png"
 	"os/exec"
 	"testing"
 )
@@ -113,5 +116,25 @@ func TestPickDisplay(t *testing.T) {
 	}
 	if _, _, ok := d.toDisplay(10, 10); ok {
 		t.Fatal("point on another display reported as on d")
+	}
+}
+
+func TestDIBRoundTrip(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 3, 2))
+	src.SetNRGBA(0, 0, color.NRGBA{255, 0, 0, 255})
+	src.SetNRGBA(2, 1, color.NRGBA{0, 0, 255, 128})
+	png1, err := dibToPNG(imageToDIB(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(png1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA); got != (color.NRGBA{255, 0, 0, 255}) {
+		t.Fatalf("top-left %v", got)
+	}
+	if got := color.NRGBAModel.Convert(img.At(2, 1)).(color.NRGBA); got != (color.NRGBA{0, 0, 255, 128}) {
+		t.Fatalf("bottom-right %v", got)
 	}
 }

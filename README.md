@@ -26,6 +26,9 @@
   - Clipboard đồng bộ hai chiều.
   - Chuyển file hai chiều: copy file rồi ⌘V/Ctrl+V vào màn hình máy kia; kéo thả; nút 📁 để duyệt và tải file của máy kia (agent 0.2.2+).
   - **Nhiều màn hình** (agent 0.2.6+): ô 🖥 trên thanh công cụ (chỉ hiện khi máy kia có từ 2 màn hình) chọn màn hình để xem. Chuột, bàn phím và vị trí con trỏ chữ theo màn hình đang xem. Trình duyệt nhớ lựa chọn theo từng máy, giống zoom.
+  - **Chất lượng tự động** (mặc định): viewer đo mất gói / số frame nhận được, tự hạ xuống 720p khi mạng xấu và nâng lại sau một phút ổn định. Đã ở 720p mà đường TURN vẫn mất gói thì bỏ TURN trong phiên đó (P2P trực tiếp nếu được, không thì relay). Agent 0.3.0 tự chuyển sang keyframe mỗi giây khi P2P liên tục mất hình.
+  - **Clipboard ảnh** (agent 0.3.0+): chụp màn hình rồi ⌘V/Ctrl+V vào máy kia là dán ảnh; ảnh copy ở máy kia vào thẳng clipboard máy này.
+  - Menu "Phím…" (agent 0.3.0+): **Khởi động lại máy kia**; bật/tắt **thông báo trên máy kia khi có người xem** (mặc định tắt, lưu trong `config.json` của máy đó).
   - **Âm thanh** (agent 0.2.6+): nút 🔇/🔊, mặc định tắt; agent chỉ thu tiếng khi có viewer đang bật. Opus 96 kbps, đi qua relay (WebSocket) hoặc track WebRTC khi P2P. Ngoài thời gian truyền: nén khoảng 20 ms, viewer đệm khoảng 60 ms. Cần WebCodecs `AudioDecoder` giải được Opus (Chrome/Edge, app Windows); trình duyệt không có thì nút bị ẩn.
 
 ## Bảo mật
@@ -61,6 +64,8 @@ Mở `https://remote.tuandv.id.vn` → đăng nhập → **Cài RemoteDesk lên 
 
 `remote-agent -check` để tự kiểm tra trên máy; log ở `agent.log` cạnh `config.json`.
 
+**Cập nhật agent**: trang danh sách máy hiện "có bản mới" và nút **Cập nhật** cạnh máy chạy bản cũ (Windows 0.2.1+, Mac 0.2.3+), không cần vào phiên. Trong phiên: "Phím…" → "Cập nhật agent". **Lịch sử truy cập**: mục cuối trang danh sách máy (ai xem máy nào, lúc nào, bao lâu, từ thiết bị / IP nào).
+
 ## Phát triển & deploy
 
 ```bash
@@ -72,6 +77,6 @@ SSHPASS=… ./scripts/deploy.sh --setup   # lần đầu: token, nginx, certbot
 ## Giới hạn hiện tại
 
 - Xem một màn hình mỗi lần; mọi người đang xem cùng một máy thấy cùng màn hình (agent chỉ nén một luồng).
-- Windows: chưa điều khiển được màn hình khoá, UAC, Ctrl+Alt+Del (cần Windows Service chạy SYSTEM). Nếu máy khởi động lại, agent chỉ chạy sau khi đăng nhập, nên bật tự đăng nhập. Màn hình nối vào card đồ hoạ thứ hai không chụp được bằng `ddagrab`; agent dùng `gdigrab` cho màn hình đó.
+- Windows: chưa điều khiển được màn hình khoá, UAC, Ctrl+Alt+Del (agent chạy trong phiên người dùng; Mac thì mở khoá được vì màn hình khoá vẫn thuộc phiên đó). Nếu máy khởi động lại, agent chỉ chạy sau khi đăng nhập, nên bật tự đăng nhập. Màn hình nối vào card đồ hoạ thứ hai không chụp được bằng `ddagrab`; agent dùng `gdigrab` cho màn hình đó.
 - Âm thanh chỉ một chiều (máy bị điều khiển → viewer), chưa có micro. Mac cần macOS 13 trở lên. Trình duyệt không giải được Opus bằng `AudioDecoder` (một số bản Safari / iPhone) thì không có nút 🔊.
 - Trên Mac, trình duyệt giữ lại một số phím tắt (⌘Tab, ⌘Q). Bấm ⛶ để vào toàn màn hình, Chrome/Edge sẽ khoá phím hệ thống, hoặc dùng menu "Phím…".

@@ -1,4 +1,4 @@
-# RemoteDesk — ghi chú bàn giao (cập nhật 2026-10-15)
+# RemoteDesk — ghi chú bàn giao (cập nhật 2026-10-19)
 
 Đọc file này trước, rồi đến [README.md](README.md) (kiến trúc + build/deploy). Tài liệu kỹ thuật có sơ đồ: [docs/RemoteDesk-TaiLieuKyThuat.pdf](docs/RemoteDesk-TaiLieuKyThuat.pdf) (viết ngày 2026-10-05, chưa có TURN / nhiều màn hình / âm thanh).
 
@@ -12,7 +12,7 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
   - **TURN**: coturn trên cùng VPS (3478 UDP/TCP, 5349 TLS), cài bằng `scripts/setup-turn.sh`. Relay ký thông tin đăng nhập tạm (24 h) từ `TURN_SECRET` trong `relay/.env`: viewer nhận trong `hello`, agent nhận `{"t":"ice"}` (agent 0.2.6+ mới dùng; agent cũ chỉ có STUN).
   - DNS do PA Việt Nam quản lý, không có wildcard; mỗi subdomain mới phải tự thêm bản ghi A.
 - **Mã truy cập**: nhiều người dùng, mỗi token chỉ thấy máy của mình. Token admin = `REMOTE_TOKEN` trong `relay/.env` trên VPS, bản sao ở `~/remote-desk/.env` local (gitignored). Admin có thể đặt mật khẩu riêng ở `#/admin`. Người dùng khác lưu ở `/home/pc1/remote-desk/data/users.json` (ngoài thư mục rsync). Không commit, không dán token vào chat.
-- **Phiên bản**: agent **0.2.7** (0.2.6 + bỏ restart encoder khi PLI); 0.2.6 (nhiều màn hình, âm thanh, dùng TURN) được build và phát hành bằng `./scripts/deploy.sh`. Máy đang cài bản cũ phải cập nhật: menu "Phím…" → "Cập nhật agent" (Windows 0.2.1+, Mac 0.2.3+), hoặc cài lại.
+- **Phiên bản**: agent **0.3.0** (2026-10-19): chất lượng tự động + GOP ngắn khi P2P mất hình, clipboard ảnh, khởi động lại máy từ xa, thông báo khi có người xem (bật/tắt từ viewer), cập nhật từ danh sách máy. 0.2.7: PLI không còn restart encoder. 0.2.6: nhiều màn hình, âm thanh, TURN. Agent Mac cần macOS 13+ (build đặt `MACOSX_DEPLOYMENT_TARGET=13.0`).
 - **Các máy**:
   - `macbook-pro-cua-tuandv` "MacBook Pro (công ty)": **agent + app**, macOS 26, một màn hình.
     - Agent: `~/Library/Application Support/RemoteDesk/RemoteDesk.app` (LaunchAgent `vn.tuandv.remotedesk`), ký bằng chứng chỉ Apple Development cố định nên cập nhật không mất quyền Screen Recording / Accessibility.
@@ -55,7 +55,8 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
   - Tương thích: viewer mới + agent 0.2.5, offer P2P không audio + agent mới.
 - Chưa thử được:
   - **Video trên Mac khi agent chạy từ phiên dev**: avfoundation không ra hình, kể cả với binary 0.2.5 không sửa gì (quyền Screen Recording chỉ áp dụng cho agent chạy bằng LaunchAgent thật). Agent thật vẫn stream bình thường.
-  - Nhiều màn hình với hai màn hình thật (Mac này chỉ có một).
+  - Nhiều màn hình trên Windows; chuột / con trỏ chữ khi xem màn hình thứ hai trên Mac (chỉ thử phần chụp).
+  - Clipboard ảnh trên Windows, ảnh từ máy kia về trình duyệt, khởi động lại máy, thông báo trên Windows.
   - Toàn bộ phần Windows của 0.2.6: liệt kê màn hình (EnumDisplayMonitors + QueryDisplayConfig + DXGI), ddagrab `output_idx` / gdigrab theo offset, chuột `MOUSEEVENTF_VIRTUALDESK`, WASAPI loopback, P2P qua TURN. Đã build chéo và vet; prompt kiểm tra trên máy Windows nằm trong lịch sử chat ngày 2026-10-15.
   - Phím Win / Alt+Tab của app Windows ở chế độ toàn màn hình (commit 8d63b49).
   - Bộ cài NSIS (cài đè, gỡ, cập nhật từ xa), `.pkg` của Mac, app iPhone trên máy thật ngoài lần cài đầu.
@@ -64,9 +65,9 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
 1. **Windows thỉnh thoảng rớt kết nối** (WebSocket 1006, khoảng 2 lần / 12 giờ, tự nối lại sau 20–30 giây). Từ 2026-10-12 agent giữ màn hình sáng khi cắm điện; cần theo dõi xem còn rớt không.
 2. **TURN qua mạng công ty (2026-10-16)**: P2P qua TURN chạy được (`p2p[N]: via … relay 103.163.216.32`), nhưng mạng công ty mất gói. Agent 0.2.6 khởi động lại encoder mỗi lần có PLI (89 lần trong một buổi sáng), mỗi lần lại bắn một keyframe lớn qua UDP; cùng lúc đó WebSocket của agent và các kết nối TCP tới VPS bị reset ở cả hai đầu (nghi firewall công ty). Agent 0.2.7 bỏ việc khởi động lại encoder khi có PLI (chờ keyframe tự nhiên ≤ 3 s). Nếu vẫn rớt: thử bỏ ô P2P (đi relay TCP 443) để so sánh.
 3. **Mac công ty ⇄ Windows nhà**: mạng công ty là NAT đối xứng, nên P2P trực tiếp không được. Viewer đã nhận thông tin TURN từ 2026-10-15, agent nhận từ 0.2.6; kỳ vọng thanh trạng thái hiện `P2P TURN` (UDP vòng qua VPS). Chưa xác nhận.
-4. Binary agent Mac build ra có `minos 26.0` (theo máy build) dù Info.plist ghi 11.0. Nếu cần chạy trên Mac cũ hơn thì đặt `MACOSX_DEPLOYMENT_TARGET` trong `scripts/build.sh`.
-5. Chưa có: micro (âm thanh viewer → máy kia), xem nhiều màn hình cùng lúc, điều khiển màn hình khoá / UAC trên Windows khi chưa đăng nhập (đang dùng Autologon).
-6. VPS: RAM khoảng 2 GB, ổ đĩa đã đầy khoảng 91%; relay dùng khoảng 50 MB.
+4. Binary agent Mac: trước 0.3.0 build ra `minos 26.0` (theo máy build); từ 0.3.0 `scripts/build.sh` đặt 13.0 (mức thấp nhất Go 1.27 cho phép).
+5. Chưa có: micro (âm thanh viewer → máy kia), xem nhiều màn hình cùng lúc, điều khiển màn hình khoá / UAC / Ctrl+Alt+Del trên Windows (agent chạy trong phiên người dùng; đang dùng Autologon để agent chạy sau khi khởi động lại).
+6. VPS: RAM khoảng 2 GB; ổ đĩa 68% sau khi dọn journal ngày 2026-10-19 (giới hạn journald 300 MB: `/etc/systemd/journald.conf.d/size.conf`). `/home/pc1` chiếm 6 GB. Lịch sử truy cập: `/home/pc1/remote-desk/data/audit.jsonl` (xoay vòng ở 5 MB).
 
 ## Bảo mật cần làm
 - Mật khẩu SSH/sudo của VPS và một mật khẩu khác đã từng bị dán vào chat; **nên đổi**. Không mật khẩu nào nằm trong code.

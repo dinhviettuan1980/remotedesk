@@ -9,6 +9,8 @@ const QUALITY = {
   sharp: { fps: 60, maxw: 1920, kbps: 8000 },
   max: { fps: 60, maxw: 3840, kbps: 16000 },
 };
+// "Tự động" moves between these as the network allows (autoQuality).
+const AUTO_LEVELS = ['eco', 'balanced'];
 // Fallback; the relay's hello carries STUN + TURN (coturn on the VPS).
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 const P2P_SUPPORTED = 'RTCPeerConnection' in window && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
@@ -75,6 +77,7 @@ $('login-form').addEventListener('submit', async (e) => {
 // ---------------------------------------------------------------- devices
 
 let devicesTimer = null;
+const updating = new Map(); // agent id → time "Cập nhật" was clicked (the list re-renders every 3 s)
 
 async function showDevices() {
   show('devices');
@@ -100,14 +103,58 @@ async function refreshDevices() {
     li.innerHTML = `<span class="os"></span><span class="meta"><div class="title"></div><div class="sub"></div></span><span class="dot"></span>`;
     li.querySelector('.os').textContent = a.os === 'darwin' ? '' : a.os === 'windows' ? '⊞' : '🖥';
     li.querySelector('.title').textContent = a.name;
-    li.querySelector('.sub').textContent = `${a.os === 'darwin' ? 'macOS' : a.os === 'windows' ? 'Windows' : a.os} · agent ${a.ver}${a.watching ? ` · ${a.watching} người đang xem` : ''}`;
+    li.querySelector('.sub').textContent = `${a.os === 'darwin' ? 'macOS' : a.os === 'windows' ? 'Windows' : a.os} · agent ${a.ver}${a.latest ? ` · có bản ${a.latest}` : ''}${a.watching ? ` · ${a.watching} người đang xem` : ''}`;
     li.querySelector('.dot').classList.toggle('busy', a.busy);
     li.onclick = () => { location.hash = `#/d/${encodeURIComponent(a.id)}`; };
+    if (!a.latest) updating.delete(a.id);
+    if (a.canUpdate) li.querySelector('.meta').after(updateButton(a));
     return li;
   }));
   $('device-empty').hidden = list.length > 0;
   if (!list.length) $('install').open = true;
 }
+
+// "Cập nhật" next to an outdated machine: the agent downloads the current
+// installer and restarts (Windows 0.2.1+, macOS 0.2.3+), no session needed.
+function updateButton(a) {
+  const b = document.createElement('button');
+  b.className = 'dev-update';
+  const busy = updating.has(a.id) && Date.now() - updating.get(a.id) < 120_000;
+  b.textContent = busy ? 'Đang cập nhật…' : 'Cập nhật';
+  b.disabled = busy;
+  b.title = `Cập nhật agent lên ${a.latest}. Máy sẽ offline khoảng 10–30 giây.`;
+  b.onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Cập nhật agent trên "${a.name}" lên ${a.latest}? Máy sẽ offline khoảng 10–30 giây rồi tự nối lại.`)) return;
+    b.disabled = true;
+    b.textContent = 'Đang cập nhật…';
+    try {
+      const r = await fetch('/api/agents/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      updating.set(a.id, Date.now());
+    } catch (err) {
+      alert(`Không gửi được lệnh cập nhật: ${err.message}`);
+      b.disabled = false;
+      b.textContent = 'Cập nhật';
+    }
+  };
+  return b;
+}
+
+// Access history (relay: data/audit.jsonl), loaded when the section is opened.
+$('audit').addEventListener('toggle', async () => {
+  if (!$('audit').open) return;
+  let list = [];
+  try { const r = await fetch('/api/audit', { cache: 'no-store' }); if (r.ok) list = await r.json(); } catch { /* offline */ }
+  const fmt = (t) => new Date(t).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const dur = (ms) => { const m = Math.round(ms / 60000); return m < 1 ? '< 1 phút' : m < 60 ? `${m} phút` : `${Math.floor(m / 60)} giờ ${m % 60} phút`; };
+  $('audit-list').replaceChildren(...(list.length ? list : [null]).map((e) => {
+    const li = document.createElement('li');
+    li.className = 'small';
+    li.textContent = e ? `${fmt(e.start)} · ${e.name} · ${dur(e.end - e.start)} · ${e.device} · ${e.ip}` : 'Chưa có phiên nào.';
+    return li;
+  }));
+});
 
 async function loadInstall() {
   try {
@@ -191,7 +238,11 @@ function startSession(id) {
     p2pRetry: null,
     p2pFails: 0,
     pendingCands: [],
-    p2pStats: null, // { bytes, at } of the last getStats sample
+    p2pStats: null, // { bytes, lost, recv, freezes, at } of the last getStats sample
+    rxFrames: 0, // relay frames received this second (for auto quality)
+    // "Tự động": index into AUTO_LEVELS, seconds bad / good in a row, last change.
+    aq: { level: 1, bad: 0, good: 0, changed: 0 },
+    noTurn: false, // TURN lost too much this session: P2P only if direct
     p2pAudio: null, // <audio> playing the P2P Opus track
     // Displays of the remote machine (agent 0.2.6+, from "info").
     screens: null,
@@ -208,7 +259,7 @@ function startSession(id) {
   renderScreens();
   updateAudioButton();
   updateMode();
-  $('sel-quality').value = prefs.get('quality', 'balanced');
+  $('sel-quality').value = prefs.get('quality', 'auto');
   $('sess-name').textContent = id;
   setOverlay('Đang kết nối…');
   connect();
@@ -240,7 +291,7 @@ function setOverlay(text) {
 }
 
 function connect() {
-  const q = QUALITY[prefs.get('quality', 'balanced')] || QUALITY.balanced;
+  const q = currentQuality();
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}/ws/view?id=${encodeURIComponent(S.id)}&fps=${q.fps}&maxw=${q.maxw}&kbps=${q.kbps}`);
   ws.binaryType = 'arraybuffer';
@@ -325,6 +376,20 @@ function onControl(m) {
       S.lastClip = m.text;
       if (navigator.clipboard && document.hasFocus()) navigator.clipboard.writeText(m.text).catch(() => {});
       break;
+    case 'clipimg': // agent 0.3.0+: an image was copied on the remote machine
+      if (navigator.clipboard && window.ClipboardItem && document.hasFocus()) {
+        const bin = atob(m.png), bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]).catch(() => {});
+      }
+      break;
+    case 'clipimg-ok':
+      if (S.clipImgWait) S.clipImgWait();
+      break;
+    case 'agentcfg':
+      S.agentNotify = !!m.notify;
+      renderAgentMenu();
+      break;
     case 'error':
       setOverlay(m.msg);
       break;
@@ -366,6 +431,7 @@ function requestKeyframe() {
 function onVideo(buf) {
   if (S.p2pLive) return; // stray relay frames sent before it saw our switch
   S.bytes += buf.byteLength;
+  S.rxFrames++;
   const dv = new DataView(buf);
   if (dv.getUint8(0) !== 1) return;
   const key = (dv.getUint8(1) & 1) === 1;
@@ -427,7 +493,9 @@ function p2pWanted() {
 async function startP2P() {
   if (!S || S.pc || !p2pWanted() || !S.ws || S.ws.readyState !== WebSocket.OPEN) return;
   clearTimeout(S.p2pRetry);
-  const pc = new RTCPeerConnection({ iceServers: S.ice || ICE_SERVERS, bundlePolicy: 'max-bundle' });
+  let ice = S.ice || ICE_SERVERS;
+  if (S.noTurn) ice = ice.map((s) => ({ urls: [].concat(s.urls).filter((u) => !/^turns?:/.test(u)) })).filter((s) => s.urls.length);
+  const pc = new RTCPeerConnection({ iceServers: ice, bundlePolicy: 'max-bundle' });
   S.pc = pc;
   S.pendingCands = [];
   const dc = pc.createDataChannel('input', { ordered: true });
@@ -548,11 +616,16 @@ function stopP2P(reason) {
 }
 
 async function p2pStats() {
-  let bytes = 0, rtt = null, kind = '';
+  let bytes = 0, rtt = null, kind = '', lost = 0, recv = 0, freezes = 0;
   const report = await S.pc.getStats();
   const pairs = new Map();
   report.forEach((r) => {
-    if (r.type === 'inbound-rtp' && r.kind === 'video') bytes = r.bytesReceived;
+    if (r.type === 'inbound-rtp' && r.kind === 'video') {
+      bytes = r.bytesReceived;
+      lost = r.packetsLost || 0;
+      recv = r.packetsReceived || 0;
+      freezes = r.freezeCount || 0;
+    }
     if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pairs.set(r.localCandidateId, r);
   });
   for (const [localId, pair] of pairs) {
@@ -565,9 +638,48 @@ async function p2pStats() {
   }
   const now = performance.now();
   const prev = S.p2pStats;
-  S.p2pStats = { bytes, at: now };
+  S.p2pStats = { bytes, lost, recv, freezes, at: now };
   const kbps = prev ? Math.round(((bytes - prev.bytes) * 8) / (now - prev.at)) : 0;
-  return { kbps, rtt, kind };
+  const dLost = prev ? Math.max(0, lost - prev.lost) : 0, dRecv = prev ? Math.max(0, recv - prev.recv) : 0;
+  const loss = dLost + dRecv > 0 ? dLost / (dLost + dRecv) : 0;
+  return { kbps, rtt, kind, loss, froze: !!prev && freezes > prev.freezes };
+}
+
+function currentQuality() {
+  const q = prefs.get('quality', 'auto');
+  if (q === 'auto') return QUALITY[AUTO_LEVELS[S ? S.aq.level : 1]];
+  return QUALITY[q] || QUALITY.balanced;
+}
+
+// "Tự động": called once a second with how the last second went. Three bad
+// seconds in a row step the quality down (the agent restarts its encoder at
+// the new bitrate); a minute without trouble steps it back up. Already at the
+// lowest level and the P2P path is TURN: give TURN up for this session —
+// direct P2P if the network allows, the relay (TCP) otherwise.
+function autoQuality(bad, path) {
+  const aq = S.aq, now = performance.now();
+  if (bad) { aq.bad++; aq.good = 0; } else { aq.good++; aq.bad = 0; }
+  if (prefs.get('quality', 'auto') !== 'auto' || now - aq.changed < 10000) return;
+  if (aq.bad >= 3) {
+    if (aq.level > 0) {
+      aq.level--;
+      aq.changed = now;
+      aq.bad = 0;
+      console.info(`auto quality: down to ${AUTO_LEVELS[aq.level]}`);
+      sendNow({ t: 'cfg', ...currentQuality() });
+    } else if (path === 'TURN' && aq.bad >= 10) {
+      S.noTurn = true;
+      aq.changed = now;
+      aq.bad = 0;
+      stopP2P('TURN mất gói nhiều');
+    }
+  } else if (aq.good >= 60 && aq.level < AUTO_LEVELS.length - 1) {
+    aq.level++;
+    aq.changed = now;
+    aq.good = 0;
+    console.info(`auto quality: up to ${AUTO_LEVELS[aq.level]}`);
+    sendNow({ t: 'cfg', ...currentQuality() });
+  }
 }
 
 // ---------------------------------------------------------------- displays (agent 0.2.6+)
@@ -575,6 +687,10 @@ async function p2pStats() {
 function onInfo(m) {
   S.agentAudio = !!m.audio;
   updateAudioButton();
+  S.agentCmds = !!m.reboot; // agent 0.3.0+
+  S.agentNotify = !!m.notify;
+  S.agentClipImg = !!m.clipimg;
+  renderAgentMenu();
   if (!Array.isArray(m.screens)) return; // older agent: one display, no choice
   const switched = S.switching != null && m.screen === S.switching;
   S.screens = m.screens;
@@ -590,6 +706,40 @@ function onInfo(m) {
   let i = S.screens[want.i] && S.screens[want.i].name === want.name ? want.i : S.screens.findIndex((d) => d.name === want.name);
   if (i < 0 && want.i < S.screens.length) i = want.i;
   if (i >= 0 && i !== S.screen) chooseScreen(i, false);
+}
+
+// "Phím…" entries that only agent 0.3.0+ understands.
+function renderAgentMenu() {
+  const sel = $('sel-keys');
+  for (const o of [...sel.querySelectorAll('.agent-cmd')]) o.remove();
+  if (!S || !S.agentCmds) return;
+  const add = (value, text) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = text;
+    o.className = 'agent-cmd';
+    sel.append(o);
+  };
+  add('toggle-notify', S.agentNotify ? 'Thông báo trên máy kia khi có người xem: đang bật' : 'Thông báo trên máy kia khi có người xem: đang tắt');
+  add('reboot-machine', 'Khởi động lại máy kia');
+}
+
+// A pasted screenshot (not a copied file): browsers call it "image.png".
+function pastedImage(dt) {
+  if (!dt || !S.agentClipImg || dt.getData('text/plain')) return null;
+  const files = [...(dt.files || [])];
+  return files.length === 1 && /^image\//.test(files[0].type) && files[0].name === 'image.png' && files[0].size <= 8 << 20 ? files[0] : null;
+}
+
+// Puts the image on the remote clipboard and waits for the agent's ack, so
+// the paste keys sent next find it there.
+async function sendClipImage(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  sendNow({ t: 'clipimg', png: btoa(bin) }); // relay: too big for the P2P data channel
+  await new Promise((res) => { S.clipImgWait = res; setTimeout(res, 5000); });
+  if (S) S.clipImgWait = null;
 }
 
 function renderScreens() {
@@ -788,14 +938,22 @@ async function updateStats() {
   s.bytes = 0;
   s.frames = 0;
   let path = 'relay';
+  const rx = s.rxFrames;
+  s.rxFrames = 0;
   if (s.p2pLive && s.pc) {
     try {
       const st = await p2pStats();
       kbps = st.kbps;
       path = `P2P${st.kind ? ' ' + st.kind : ''}${st.rtt != null ? ` ${Math.round(st.rtt * 1000)} ms` : ''}`;
+      if (S === s) autoQuality(st.loss > 0.03 || st.froze, st.kind);
     } catch { path = 'P2P'; }
     if (S !== s) return;
+  } else if (s.vw && !document.hidden) {
+    // Relay: the relay drops frames for a viewer that can't keep up, so
+    // receiving well under the frame rate means the link is too slow.
+    autoQuality(rx < currentQuality().fps * 0.4, 'relay');
   }
+  if (prefs.get('quality', 'auto') === 'auto') path += ` · tự động ${AUTO_LEVELS[s.aq.level] === 'eco' ? '720p' : '1080p'}`;
   const enc = $('sess-stats').dataset.enc;
   $('sess-stats').textContent = s.vw ? `${s.vw}×${s.vh} · ${fps} fps · ${kbps} kbps · ${path}${enc ? ' · ' + enc : ''}` : '';
   $('menu-stats').textContent = $('sess-stats').textContent;
@@ -1382,6 +1540,13 @@ window.addEventListener('paste', (e) => {
   clearTimeout(S.pasteTimer);
   const code = S.pasteKey;
   S.pasteKey = null;
+  const img = pastedImage(e.clipboardData);
+  if (img) { // a screenshot: image clipboard on the remote machine, then the paste keys
+    S.gate = S.gate.then(() => sendClipImage(img)).catch(() => {});
+    S.pressed.set('KeyV', code);
+    send({ t: 'kd', c: code });
+    return;
+  }
   if (handlePasteEvent(e)) { S.swallowKeyUp = code; return; } // files.js sends the keystroke when done
   const text = e.clipboardData && e.clipboardData.getData('text/plain');
   if (text && text !== S.lastClip) { S.lastClip = text; send({ t: 'clip', text }); }
@@ -1520,7 +1685,8 @@ $('sel-zoom').onchange = (e) => { setZoom(e.target.value); stage.focus(); };
 
 $('sel-quality').onchange = (e) => {
   prefs.set('quality', e.target.value);
-  sendNow({ t: 'cfg', ...QUALITY[e.target.value] });
+  if (S) { S.aq = { level: 1, bad: 0, good: 0, changed: performance.now() }; S.noTurn = false; }
+  sendNow({ t: 'cfg', ...currentQuality() });
   stage.focus();
 };
 
@@ -1563,7 +1729,23 @@ $('sel-keys').onchange = (e) => {
   const v = e.target.value;
   e.target.value = '';
   stage.focus();
-  if (!S || !S.control) { nudgeMode(); return; }
+  if (!S) return;
+  const agentCmd = ['restart-agent', 'update-agent', 'toggle-notify', 'reboot-machine'].includes(v);
+  if (!S.control && !agentCmd) {
+    nudgeMode();
+    flashNotice('Đang ở chế độ 👁 Chỉ xem — bấm nút đó để chuyển sang 🖱 Điều khiển rồi gửi phím.');
+    return;
+  }
+  if (v === 'toggle-notify') {
+    sendNow({ t: 'setcfg', notify: !S.agentNotify });
+    return;
+  }
+  if (v === 'reboot-machine') {
+    const mac = S.agent && S.agent.os === 'darwin';
+    const warn = mac ? ' Mac bật FileVault sẽ cần nhập mật khẩu tại máy sau khi khởi động.' : ' Agent chỉ chạy lại sau khi Windows đăng nhập (cần bật tự đăng nhập).';
+    if (confirm(`Khởi động lại máy "${S.agent ? S.agent.name : ''}"? Ứng dụng đang mở có thể hỏi lưu.${warn}`)) sendNow({ t: 'reboot' });
+    return;
+  }
   if (v === 'restart-agent') {
     if (confirm('Khởi động lại agent trên máy kia?')) sendNow({ t: 'restart' });
     return;

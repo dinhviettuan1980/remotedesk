@@ -39,6 +39,8 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .device .os { font-size: 26px; width: 34px; text-align: center; }
 .device .meta { flex: 1; min-width: 0; }
 .device .title { font-weight: 600; }
+.device .dev-update { padding: 5px 12px; font-size: 13px; border-color: var(--accent); color: var(--accent); white-space: nowrap; }
+.device .dev-update:disabled { opacity: .6; }
 .device .sub { color: var(--muted); font-size: 13px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); flex: none; }
 .dot.busy { background: #f0b429; }
@@ -211,3 +213,6 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .pw-field { position: relative; display: flex; }
 .pw-field input { flex: 1; min-width: 0; padding-right: 46px; }
 .pw-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: transparent; border: 0; padding: 6px 8px; font-size: 18px; line-height: 1; }
+
+.audit { list-style: none; padding: 0; margin: 6px 0 0; }
+.audit li { padding: 5px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-variant-numeric: tabular-nums; }

@@ -39,6 +39,11 @@
     </header>
     <ul id="device-list" class="devices"></ul>
     <p id="device-empty" class="muted center" hidden>Chưa có máy nào online. Cài agent lên máy cần điều khiển.</p>
+    <details id="audit" class="install">
+      <summary>Lịch sử truy cập</summary>
+      <p class="muted small">Các phiên xem / điều khiển máy của bạn đã kết thúc, mới nhất trước.</p>
+      <ul id="audit-list" class="audit"></ul>
+    </details>
     <details id="install" class="install">
       <summary>Cài RemoteDesk lên máy tính</summary>
       <p class="muted small"><b>Agent + App</b>: máy được điều khiển, và có app RemoteDesk để điều khiển máy khác. <b>Chỉ agent</b>: máy chỉ để được điều khiển (điều khiển nó từ trình duyệt / iPhone).</p>
@@ -117,6 +122,7 @@
       <div id="tb-extra" class="tb-extra">
         <div id="menu-stats" class="menu-stats small"></div>
         <select id="sel-quality" title="Chất lượng">
+          <option value="auto">Tự động</option>
           <option value="eco">Tiết kiệm · 720p</option>
           <option value="balanced">Cân bằng · 1080p</option>
           <option value="sharp">Nét · 1080p 60fps</option>

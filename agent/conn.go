@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -25,10 +26,11 @@ type outMsg struct {
 }
 
 type Agent struct {
-	cfg   *Config
-	ff    string
-	input Injector
-	inMu  sync.Mutex // input arrives from the relay and from P2P data channels
+	cfg     *Config
+	cfgPath string // config.json, for settings changed from a viewer
+	ff      string
+	input   Injector
+	inMu    sync.Mutex // input arrives from the relay and from P2P data channels
 
 	mu       sync.Mutex
 	out      chan outMsg
@@ -44,8 +46,11 @@ type Agent struct {
 	ice      []webrtc.ICEServer // from the relay: STUN + short-lived TURN credentials
 	t0       time.Time
 	clip     *clipSync
-	awake    func() // stops keep-awake
-	screen   int    // display to capture (index into listDisplays; the viewer's 🖥 choice)
+	awake    func()      // stops keep-awake
+	screen   int         // display to capture (index into listDisplays; the viewer's 🖥 choice)
+	plis     []time.Time // recent P2P picture loss reports (all peers)
+	lossy    bool        // short keyframe interval while P2P keeps losing pictures
+	lossyTmr *time.Timer
 
 	audio     *audioSession // running while some viewer wants sound (audio.go)
 	audioVids map[int]bool  // viewers that want sound
@@ -265,7 +270,10 @@ type inMsg struct {
 	Vids    []int              `json:"vids"` // "audio": viewers that want sound
 	WS      bool               `json:"ws"`   // "audio": some of them are on the relay
 	// viewer → agent
-	I int `json:"i"` // "screen": display index
+	I      int    `json:"i"`      // "screen": display index
+	Notify *bool  `json:"notify"` // "setcfg"
+	PNG    string `json:"png"`    // "clipimg": base64 PNG
+	From   string `json:"from"`   // relay → agent "watcher": who started watching
 }
 
 // handleInput is the entry point for the P2P data channel: input only, no
@@ -373,6 +381,30 @@ func (a *Agent) handle(data []byte) {
 		if turnOn {
 			a.wantKeyframe("relay video on")
 		}
+	case "watcher":
+		if a.cfg.Notify {
+			go notifyUser("Có người đang xem máy này: " + m.From)
+		}
+	case "setcfg":
+		if m.Notify != nil {
+			a.cfg.Notify = *m.Notify
+			if err := saveConfigValue(a.cfgPath, "notify", *m.Notify); err != nil {
+				log.Printf("save config: %v", err)
+			}
+			log.Printf("notify on watch: %v", *m.Notify)
+			a.sendJSON(map[string]any{"t": "agentcfg", "notify": a.cfg.Notify})
+		}
+	case "reboot":
+		log.Printf("machine restart requested by viewer")
+		a.sendJSON(map[string]string{"t": "notice", "msg": "Đang khởi động lại máy… Phiên sẽ tự nối lại khi máy lên và agent chạy."})
+		go func() {
+			if err := rebootMachine(); err != nil {
+				log.Printf("reboot: %v", err)
+				a.sendJSON(map[string]string{"t": "notice", "msg": "Không khởi động lại được: " + err.Error()})
+			}
+		}()
+	case "clipimg": // a pasted image: put it on this clipboard, then the viewer sends the paste keys
+		a.setClipImage(m.PNG)
 	case "screen":
 		a.mu.Lock()
 		a.screen = m.I
@@ -430,7 +462,7 @@ func clamp01(v float64) float64 { return max(0, min(1, v)) }
 // or restart the encoder.
 func (a *Agent) wantKeyframe(why string) {
 	a.mu.Lock()
-	soon := time.Since(a.lastKey) > (gopSeconds-1)*time.Second
+	soon := time.Since(a.lastKey) > time.Duration(a.params.gopSecs()-1)*time.Second
 	recent := time.Since(a.lastKf) < 2*time.Second
 	sp := a.params
 	viewer := a.viewer
@@ -453,7 +485,10 @@ func (a *Agent) join(sp StreamParams) {
 	if a.clip == nil {
 		a.clip = startClipSync(
 			func(text string) { a.sendJSON(map[string]string{"t": "clip", "text": text}) },
-			func(paths []string) { a.sendJSON(map[string]any{"t": "clipfiles", "files": describeFiles(paths)}) })
+			func(paths []string) { a.sendJSON(map[string]any{"t": "clipfiles", "files": describeFiles(paths)}) },
+			func(png []byte) {
+				a.sendJSON(map[string]string{"t": "clipimg", "png": base64.StdEncoding.EncodeToString(png)})
+			})
 	}
 	a.mu.Unlock()
 	a.input.Wake()
@@ -470,6 +505,11 @@ func (a *Agent) restart(sp StreamParams) {
 	a.dropping = false
 	viewer := a.viewer
 	screen := a.screen
+	sp.gop = 0
+	if a.lossy {
+		sp.gop = lossyGop
+	}
+	a.params.gop = sp.gop
 	a.mu.Unlock()
 	if old != nil {
 		old.Stop()
@@ -485,12 +525,13 @@ func (a *Agent) restart(sp StreamParams) {
 	a.inMu.Unlock()
 	// Displays and audio go out now, not only once capture works: a display
 	// that cannot be captured must not hide the way to pick another one.
-	info := map[string]any{"t": "info", "os": runtime.GOOS, "screens": screenInfos(displays), "screen": idx, "audio": audioAvailable(a.ff)}
+	info := map[string]any{"t": "info", "os": runtime.GOOS, "screens": screenInfos(displays), "screen": idx, "audio": audioAvailable(a.ff),
+		"notify": a.cfg.Notify, "reboot": true, "clipimg": true}
 	a.sendJSON(info)
 	s := startSession(a.ff, a.cfg, sp, a.sendFrame,
 		func(p pipeline) {
 			log.Printf("streaming display %d (%s, %dx%d) with %s", idx, disp.Name, disp.PxW, disp.PxH, p)
-			info["enc"], info["capture"] = p.encoder, p.capture
+			info["enc"], info["capture"], info["notify"] = p.encoder, p.capture, a.cfg.Notify
 			a.sendJSON(info)
 		},
 		func(err error) {
@@ -519,6 +560,7 @@ func (a *Agent) leave() {
 	clip := a.clip
 	a.clip = nil
 	a.audioVids = nil
+	a.lossy = false
 	a.mu.Unlock()
 	a.syncAudio()
 	if s != nil {
@@ -578,6 +620,61 @@ func (a *Agent) syncAudio() {
 	log.Printf("audio on")
 }
 
+// notePLI: a P2P viewer lost the picture. Ten in 30 s switch the encoder to a
+// keyframe every second (one restart); two quiet minutes switch it back.
+func (a *Agent) notePLI() {
+	now := time.Now()
+	a.mu.Lock()
+	keep := a.plis[:0]
+	for _, t := range a.plis {
+		if now.Sub(t) < 30*time.Second {
+			keep = append(keep, t)
+		}
+	}
+	a.plis = append(keep, now)
+	enter := !a.lossy && len(a.plis) >= 10 && a.viewer
+	if enter {
+		a.lossy = true
+		a.plis = nil
+	}
+	sp := a.params
+	a.mu.Unlock()
+	if !enter {
+		return
+	}
+	log.Printf("P2P path keeps losing pictures: keyframe every %ds", lossyGop)
+	a.restart(sp)
+	a.scheduleLossyCheck()
+}
+
+func (a *Agent) scheduleLossyCheck() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.lossyTmr != nil {
+		a.lossyTmr.Stop()
+	}
+	a.lossyTmr = time.AfterFunc(2*time.Minute, func() {
+		a.mu.Lock()
+		quiet := len(a.plis) == 0 || time.Since(a.plis[len(a.plis)-1]) > 2*time.Minute
+		if !a.lossy {
+			a.mu.Unlock()
+			return
+		}
+		if !quiet {
+			a.mu.Unlock()
+			a.scheduleLossyCheck()
+			return
+		}
+		a.lossy = false
+		viewer, sp := a.viewer, a.params
+		a.mu.Unlock()
+		log.Printf("P2P path quiet again: keyframe every %ds", gopSeconds)
+		if viewer {
+			a.restart(sp)
+		}
+	})
+}
+
 // ---------------------------------------------------------------- clipboard
 
 // clipSync polls the local clipboard while a viewer is attached and pushes
@@ -587,11 +684,15 @@ type clipSync struct {
 	mu        sync.Mutex
 	last      string
 	lastFiles string
+	lastSeq   uint64 // clipboard change counter last looked at for an image
 	quit      chan struct{}
 }
 
-func startClipSync(push func(string), pushFiles func([]string)) *clipSync {
-	c := &clipSync{quit: make(chan struct{})}
+// Images bigger than this stay local (base64 in one WebSocket message).
+const maxClipImage = 8 << 20
+
+func startClipSync(push func(string), pushFiles func([]string), pushImage func([]byte)) *clipSync {
+	c := &clipSync{quit: make(chan struct{}), lastSeq: clipboardSeq()}
 	c.last, _ = clipboardRead()
 	if fs, _ := clipboardReadFiles(); len(fs) > 0 {
 		c.lastFiles = strings.Join(fs, "\n")
@@ -604,6 +705,18 @@ func startClipSync(push func(string), pushFiles func([]string)) *clipSync {
 			case <-c.quit:
 				return
 			case <-t.C:
+				c.mu.Lock()
+				seq := clipboardSeq()
+				newSeq := seq != c.lastSeq
+				c.lastSeq = seq
+				c.mu.Unlock()
+				if newSeq {
+					if img, err := clipboardImage(); err != nil {
+						log.Printf("clipboard image: %v", err)
+					} else if len(img) > 0 && len(img) <= maxClipImage {
+						pushImage(img)
+					}
+				}
 				if fs, err := clipboardReadFiles(); err == nil {
 					key := strings.Join(fs, "\n")
 					c.mu.Lock()
@@ -648,3 +761,25 @@ func (c *clipSync) noteFiles(paths []string) {
 }
 
 func (c *clipSync) stop() { close(c.quit) }
+
+// setClipImage writes an image pasted on the viewer, without echoing it back.
+func (a *Agent) setClipImage(b64 string) {
+	defer a.sendJSON(map[string]string{"t": "clipimg-ok"}) // the viewer holds the paste keys until this
+	png, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(png) == 0 || len(png) > maxClipImage {
+		return
+	}
+	a.mu.Lock()
+	c := a.clip
+	a.mu.Unlock()
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := clipboardWriteImage(png); err != nil {
+		log.Printf("clipboard image write: %v", err)
+		return
+	}
+	c.lastSeq = clipboardSeq()
+}

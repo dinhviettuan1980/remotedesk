@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -146,6 +148,32 @@ func keepAwake() func() {
 		procSetThreadExecutionState.Call(esContinuous)
 	}()
 	return func() { close(stop) }
+}
+
+// notifyUser shows a tray balloon in the signed-in user's session.
+func notifyUser(msg string) {
+	q := strings.ReplaceAll(msg, "'", "''")
+	script := "Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; " +
+		"$n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true; " +
+		"$n.ShowBalloonTip(8000, 'RemoteDesk', '" + q + "', 'Info'); Start-Sleep 9; $n.Dispose()"
+	u := utf16.Encode([]rune(script))
+	b := make([]byte, len(u)*2)
+	for i, c := range u {
+		b[2*i], b[2*i+1] = byte(c), byte(c>>8)
+	}
+	args := []string{"-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", base64.StdEncoding.EncodeToString(b)}
+	if err := runInUserSession("powershell.exe", args); err != nil {
+		log.Printf("notify: %v", err)
+	}
+}
+
+func rebootMachine() error {
+	cmd := exec.Command("shutdown.exe", "/r", "/t", "5", "/c", "RemoteDesk: khởi động lại từ xa")
+	hideWindow(cmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%v %s", err, firstLine(string(out)))
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- clipboard

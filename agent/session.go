@@ -20,6 +20,7 @@ type StreamParams struct {
 	Kbps int `json:"kbps"`
 
 	disp Display // what to capture (set by the agent, not the viewer)
+	gop  int     // keyframe interval in seconds (set by the agent; 0 = gopSeconds)
 }
 
 func (p StreamParams) clamp() StreamParams {
@@ -29,12 +30,23 @@ func (p StreamParams) clamp() StreamParams {
 		}
 		return max(lo, min(hi, v))
 	}
-	return StreamParams{FPS: lim(p.FPS, 5, 60, 30), MaxW: lim(p.MaxW, 640, 3840, 1920), Kbps: lim(p.Kbps, 300, 20000, 3500), disp: p.disp}
+	return StreamParams{FPS: lim(p.FPS, 5, 60, 30), MaxW: lim(p.MaxW, 640, 3840, 1920), Kbps: lim(p.Kbps, 300, 20000, 3500), disp: p.disp, gop: p.gop}
 }
 
 // gopSeconds: keyframe interval. Viewers joining or switching to P2P wait at
-// most this long for a picture without restarting the encoder.
-const gopSeconds = 3
+// most this long for a picture without restarting the encoder. lossyGop is
+// used while a P2P path keeps losing pictures, so it recovers sooner.
+const (
+	gopSeconds = 3
+	lossyGop   = 1
+)
+
+func (p StreamParams) gopSecs() int {
+	if p.gop > 0 {
+		return p.gop
+	}
+	return gopSeconds
+}
 
 // pipeline is one way to get H.264 out of ffmpeg: a capture input plus an encoder.
 type pipeline struct {
@@ -60,7 +72,7 @@ func (p pipeline) args(sp StreamParams) []string {
 		pixfmt = "nv12"
 	}
 	vf += ",format=" + pixfmt
-	gop := strconv.Itoa(sp.FPS * gopSeconds)
+	gop := strconv.Itoa(sp.FPS * sp.gopSecs())
 	kb := func(k int) string { return strconv.Itoa(k) + "k" }
 	a = append(a, "-an", "-vf", vf, "-c:v", p.encoder)
 	a = append(a, encoderArgs(p.encoder, sp)...)

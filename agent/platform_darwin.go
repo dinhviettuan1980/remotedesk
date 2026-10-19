@@ -105,6 +105,22 @@ func keepAwake() func() {
 	}
 }
 
+// notifyUser shows a macOS notification (attributed to Script Editor).
+func notifyUser(msg string) {
+	q := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(msg)
+	_ = exec.Command("osascript", "-e", `display notification "`+q+`" with title "RemoteDesk"`).Run()
+}
+
+// rebootMachine asks macOS to restart like the Apple menu does (apps may ask
+// to save; the first time macOS asks to allow controlling System Events).
+func rebootMachine() error {
+	out, err := exec.Command("osascript", "-e", `tell application "System Events" to restart`).CombinedOutput()
+	if err != nil {
+		return errors.New(firstLine(string(out)))
+	}
+	return nil
+}
+
 func clipboardRead() (string, error) {
 	cmd := exec.Command("pbpaste")
 	cmd.Env = append(os.Environ(), "LANG=en_US.UTF-8") // launchd jobs have no LANG; without it non-ASCII is mangled

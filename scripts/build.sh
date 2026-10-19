@@ -10,10 +10,18 @@ cd agent
 echo "▸ test"
 go test ./...
 
+# The relay shows "có bản mới" next to machines running something older.
+sed -n 's/^const version = "\(.*\)"/\1/p' main.go > "$OUT/agent-version.txt"
+
 echo "▸ windows/amd64"
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-H=windowsgui -s -w" -o "$OUT/remote-agent-windows-amd64.exe" .
 
 echo "▸ darwin universal"
+# Without this clang targets the build machine's macOS (26). 13.0 is what Go
+# 1.27 itself needs; ScreenCaptureKit audio (also macOS 13) then always works.
+export MACOSX_DEPLOYMENT_TARGET=13.0
+# Also as a cgo flag: Go's build cache ignores the variable above.
+export CGO_CFLAGS="-O2 -g -mmacosx-version-min=13.0" CGO_LDFLAGS="-O2 -g -mmacosx-version-min=13.0"
 TMP="$(mktemp -d)"
 GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CC="clang -arch x86_64" go build -trimpath -ldflags "-s -w" -o "$TMP/amd64" .
 GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 CC="clang -arch arm64" go build -trimpath -ldflags "-s -w" -o "$TMP/arm64" .
@@ -45,7 +53,7 @@ cat > "$APPB/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSUIElement</key><true/>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict>
 </plist>
 PLIST

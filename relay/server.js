@@ -33,6 +33,9 @@
 //   P2P peers get an Opus track) and whether anyone needs it over the relay.
 //   Type 3 goes only to viewers with sound on that are not on P2P.
 //   {"t":"screen","i":N} (viewer → agent) picks the display; forwarded as is.
+//   {"t":"watcher","from":"iPhone · App (1.2.3.4)"} relay → agent on every
+//   viewer join (agent 0.3.0+ may show a notice). Finished sessions are
+//   appended to data/audit.jsonl and listed by /api/audit.
 
 const http = require('http');
 const fs = require('fs');
@@ -69,6 +72,41 @@ const RESUME_BYTES = 512 * 1024;
 const GOP_CACHE_BYTES = 12 * 1024 * 1024;
 
 const users = new Users(USERS_FILE, TOKEN);
+
+// Access history: one JSON line per finished viewing session, next to users.json.
+const AUDIT_FILE = path.join(path.dirname(USERS_FILE), 'audit.jsonl');
+
+// "iPhone · App", "Windows · Chrome"…: enough to recognise your own devices.
+function deviceLabel(ua) {
+  ua = String(ua || '');
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+    : /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : '?';
+  const app = /RemoteDesk/.test(ua) ? 'App' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : /AppleWebKit/.test(ua) ? 'App' : '';
+  return app ? `${os} · ${app}` : os;
+}
+
+function auditWrite(entry) {
+  try {
+    const st = fs.statSync(AUDIT_FILE, { throwIfNoEntry: false });
+    if (st && st.size > 5 * 1024 * 1024) fs.renameSync(AUDIT_FILE, AUDIT_FILE + '.1');
+    fs.appendFileSync(AUDIT_FILE, JSON.stringify(entry) + '\n', { mode: 0o600 });
+  } catch (e) { console.warn('audit:', e.message); }
+}
+
+// Last n sessions of one tenant, newest first.
+function auditRead(tenantId, n = 50) {
+  const out = [];
+  for (const f of [AUDIT_FILE, AUDIT_FILE + '.1']) {
+    let lines;
+    try { lines = fs.readFileSync(f, 'utf8').trim().split('\n'); } catch { continue; }
+    for (let i = lines.length - 1; i >= 0 && out.length < n; i--) {
+      try { const e = JSON.parse(lines[i]); if (e.tenant === tenantId) { delete e.tenant; out.push(e); } } catch { /* torn line */ }
+    }
+    if (out.length >= n) break;
+  }
+  return out;
+}
 
 // TURN (coturn, scripts/setup-turn.sh): time-limited credentials per the
 // "REST API" scheme — username "<expiry>:<label>", password = HMAC-SHA1(secret,
@@ -160,8 +198,41 @@ let viewerSeq = 0;
 
 const agentKey = (tenant, id) => `${tenant}/${id}`;
 
+// "0.2.10" vs "0.2.6": <0, 0, >0
+function cmpVer(a, b) {
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// The agent version in dist/ (scripts/build.sh writes agent-version.txt).
+let latestCache = { at: 0, ver: '' };
+function latestAgent() {
+  if (Date.now() - latestCache.at > 30_000) {
+    let ver = '';
+    try { ver = fs.readFileSync(path.join(DIST_DIR, 'agent-version.txt'), 'utf8').trim(); } catch { /* not built */ }
+    latestCache = { at: Date.now(), ver };
+  }
+  return latestCache.ver;
+}
+
+// Agents that understand {"t":"update"}: Windows 0.2.1+, macOS 0.2.3+.
+function canSelfUpdate(a) {
+  if (a.os === 'windows') return cmpVer(a.ver, '0.2.1') >= 0;
+  if (a.os === 'darwin') return cmpVer(a.ver, '0.2.3') >= 0;
+  return false;
+}
+
 function agentSummary(a) {
-  return { id: a.id, name: a.name, os: a.os, ver: a.ver, since: a.since, busy: a.viewers.size > 0, watching: a.viewers.size };
+  const latest = latestAgent();
+  const outdated = !!latest && /^\d+(\.\d+)*$/.test(a.ver) && cmpVer(a.ver, latest) < 0;
+  return {
+    id: a.id, name: a.name, os: a.os, ver: a.ver, since: a.since, busy: a.viewers.size > 0, watching: a.viewers.size,
+    latest: outdated ? latest : undefined, canUpdate: outdated && canSelfUpdate(a),
+  };
 }
 
 function tenantAgents(tenantId) {
@@ -356,12 +427,25 @@ const server = http.createServer(async (req, res) => {
     const t = viewerTenant(req);
     if (!t) return sendJsonRes(res, 401, {});
     if (p === '/api/me') return sendJsonRes(res, 200, { name: t.name, admin: !!t.admin });
+    // Update one of your machines from the device list (no session needed).
+    if (p === '/api/agents/update' && req.method === 'POST') {
+      if (!PUBLIC_URLS.includes(req.headers.origin || '')) return sendJsonRes(res, 403, { error: 'origin' });
+      let id = '';
+      try { id = String(JSON.parse(await readBody(req)).id || ''); } catch { /* bad body */ }
+      const a = agents.get(agentKey(t.id, id));
+      if (!a) return sendJsonRes(res, 404, { error: 'offline' });
+      if (!canSelfUpdate(a)) return sendJsonRes(res, 400, { error: 'agent quá cũ, cần cài lại tại máy' });
+      console.log(`update requested from the device list: ${agentKey(t.id, id)} (${a.ver} → ${latestAgent()})`);
+      sendJson(a.ws, { t: 'update' });
+      return sendJsonRes(res, 200, { ok: true });
+    }
     if (p === '/api/agents') {
       const list = tenantAgents(t.id).map(agentSummary).sort((a, b) => a.name.localeCompare(b.name));
       return sendJsonRes(res, 200, list);
     }
     // Install commands for the logged-in viewer's own tenant.
     if (p === '/api/install') return sendJsonRes(res, 200, installLinks(requestOrigin(req), t));
+    if (p === '/api/audit') return sendJsonRes(res, 200, auditRead(t.id));
     if (p.startsWith('/api/admin/')) {
       if (!t.admin) return sendJsonRes(res, 403, { error: 'admin only' });
       return adminApi(req, res, p);
@@ -447,7 +531,7 @@ server.on('upgrade', (req, socket, head) => {
     const origin = req.headers.origin || '';
     const t = viewerTenant(req);
     if (!t || (origin && !PUBLIC_URLS.includes(origin))) { noteFailure(ip); return reject(401, 'Unauthorized'); }
-    return wss.handleUpgrade(req, socket, head, (ws) => onViewer(ws, url, ip, t));
+    return wss.handleUpgrade(req, socket, head, (ws) => onViewer(ws, req, url, ip, t));
   }
   reject(404, 'Not Found');
 });
@@ -585,19 +669,23 @@ function replayGop(agent, v) {
   for (const f of agent.gop) v.ws.send(f, { binary: true });
 }
 
-function onViewer(ws, url, ip, tenant) {
+function onViewer(ws, req, url, ip, tenant) {
   const id = String(url.searchParams.get('id') || '');
   const key = agentKey(tenant.id, id);
   const agent = agents.get(key);
   if (!agent) return ws.close(4404, 'agent offline');
   const num = (k, d, lo, hi) => Math.min(hi, Math.max(lo, Number(url.searchParams.get(k)) || d));
-  const viewer = { ws, vid: ++viewerSeq, dropping: false, dropped: 0, p2p: false, audio: false };
+  const viewer = {
+    ws, vid: ++viewerSeq, dropping: false, dropped: 0, p2p: false, audio: false,
+    since: Date.now(), ip, device: deviceLabel(req.headers['user-agent']),
+  };
   const params = { fps: num('fps', 30, 5, 60), maxw: num('maxw', 1920, 640, 3840), kbps: num('kbps', 3000, 300, 20000) };
   const first = agent.viewers.size === 0;
   agent.viewers.add(viewer);
   ws.isAlive = true;
   console.log(`viewer join: ${key} from ${ip} (${agent.viewers.size} watching)`);
   sendJson(ws, { t: 'hello', agent: agentSummary(agent), ice: iceServers(`v-${tenant.id}`) });
+  sendJson(agent.ws, { t: 'watcher', from: `${viewer.device} (${ip})` }); // agent 0.3.0+: optional on-screen notice
   if (agent.lastInfo) ws.send(agent.lastInfo);
   if (first) {
     // Nobody was watching: start the agent's capture with this viewer's quality.
@@ -660,6 +748,7 @@ function onViewer(ws, url, ip, tenant) {
     const a = agents.get(key);
     if (!a || !a.viewers.delete(viewer)) return;
     console.log(`viewer leave: ${key} (dropped ${viewer.dropped} frames, ${a.viewers.size} still watching)`);
+    auditWrite({ tenant: a.tenant, agent: a.id, name: a.name, ip: viewer.ip, device: viewer.device, start: viewer.since, end: Date.now() });
     sendJson(a.ws, { t: 'rtc-bye', vid: viewer.vid });
     if (a.viewers.size === 0) {
       a.gop = []; a.gopBytes = 0;

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const version = "0.2.7"
+const version = "0.3.0"
 
 func main() {
 	cfgPath := flag.String("config", "", "path to config.json (default: next to the binary, then user config dir)")
@@ -62,6 +62,7 @@ func main() {
 	}
 
 	a := newAgent(cfg, ff)
+	a.cfgPath = path
 	backoff := time.Second
 	for {
 		start := time.Now()

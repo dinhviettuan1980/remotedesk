@@ -248,7 +248,8 @@ func (a *Agent) answerPeer(vid int, offer webrtc.SessionDescription) error {
 // do not restart the encoder: on a lossy path (TURN through an office
 // firewall) that looped — restart, big keyframe sent as one UDP burst, more
 // loss, PLI again — froze every viewer and got the office link reset. The
-// browser picks up again at the next natural keyframe (≤ gopSeconds).
+// browser picks up again at the next natural keyframe (≤ gopSeconds; a
+// steady stream of PLIs shortens that interval, see notePLI).
 func (a *Agent) readRTCP(p *peer, sender *webrtc.RTPSender) {
 	plis := 0
 	last := time.Now()
@@ -264,6 +265,12 @@ func (a *Agent) readRTCP(p *peer, sender *webrtc.RTPSender) {
 			switch pkt.(type) {
 			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
 				plis++
+				a.mu.Lock()
+				warm := time.Since(p.since) < 5*time.Second // browsers send PLI while the track starts up
+				a.mu.Unlock()
+				if !warm {
+					a.notePLI()
+				}
 			}
 		}
 		if plis > 0 && time.Since(last) > time.Minute {
