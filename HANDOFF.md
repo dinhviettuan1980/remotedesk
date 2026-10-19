@@ -27,8 +27,8 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
 | `relay/server.js` | Node + ws. Nhiều viewer xem cùng một agent: agent nén một lần, relay nhân luồng, giữ sẵn GOP cho người vào sau, mỗi viewer xử lý nghẽn riêng. Định tuyến âm thanh (nhị phân loại 3) chỉ tới viewer đang bật 🔊 và không đi P2P. Đăng nhập bằng token, cookie là HMAC. Phát bộ cài, cấp thông tin TURN. |
 | `relay/public/` | Viewer web: WebCodecs, 👁/🖱, zoom, 🖥 chọn màn hình, 🔇/🔊, 📁 chuyển file, cảm ứng (touchpad / chạm trực tiếp, ⌨ + hàng phím), đổi ⌘⇄Ctrl, menu phím tắt, PWA. |
 | `relay/install/` | `install.ps1`, `install.sh`. Server điền `{{SERVER}}`, `{{TOKEN}}`, `{{WITH_APP}}` lúc tải. |
-| `setup-win/` | Bộ cài NSIS (`nsis/installer.nsi` + `register.ps1`), đóng gói agent + ffmpeg gyan essentials + app. Relay gắn cấu hình JSON vào cuối file lúc tải (magic `RDCFG1`). |
-| `setup-mac/` | `.pkg` không chứa token: postinstall đọc token từ link tải mà macOS lưu kèm file. |
+| `setup-win/` | Bộ cài NSIS (`nsis/installer.nsi` + `register.ps1`), đóng gói agent + ffmpeg gyan essentials + app. Relay gắn cấu hình JSON vào cuối file lúc tải (magic `RDCFG1`): link thường chỉ có `server` → trang "Mã truy cập" hỏi mã và kiểm tra bằng `remote-agent -check-token`; link `?t=` / cập nhật từ xa có sẵn `token` → bỏ qua trang đó. |
+| `setup-mac/` | `.pkg` không chứa token: postinstall lấy token từ link tải (`?t=`) nếu có, không thì hỏi (để trống = giữ mã cũ). |
 | `viewer-win/` | App Windows: Go + WebView2. ⛶ toàn màn hình (cửa sổ không viền phủ cả taskbar); khi đang 🖱 điều khiển thì hook bàn phím cấp thấp (`keyhook.go`) gửi Win / Alt+Tab / Alt+Esc / Ctrl+Esc / Alt+Space sang máy kia. Ctrl+Alt+Enter để thoát. |
 | `viewer-mac/` | App Mac: Swift + WKWebView (`RemoteDesk-mac.zip`). ⌘W/⌘Q/⌘T gửi sang máy kia. |
 | `viewer-ios/` | App iPhone/iPad: UIKit + WKWebView toàn màn hình, tự mở bàn phím khi click trúng ô nhập ở máy kia, giữ màn hình sáng, file tải về mở share sheet. XcodeGen (`project.yml`); `build.sh` build và cài qua cáp; `--dev URL` để thử relay khác. |
@@ -71,4 +71,4 @@ Phần mềm điều khiển máy tính từ xa **cho máy cá nhân của chủ
 
 ## Bảo mật cần làm
 - Mật khẩu SSH/sudo của VPS và một mật khẩu khác đã từng bị dán vào chat; **nên đổi**. Không mật khẩu nào nằm trong code.
-- Ai có một token là điều khiển được mọi máy cài bằng token đó; link cài đặt chứa token, đừng chia sẻ nhầm.
+- Ai có một token là điều khiển được mọi máy cài bằng token đó. Bộ cài chung (`/dl/RemoteDesk-*Setup.exe`, `/dl/RemoteDesk-*Installer.pkg`) không chứa token và ai cũng tải được (từ 2026-10-19); link có `?t=` và lệnh dòng lệnh thì có token.

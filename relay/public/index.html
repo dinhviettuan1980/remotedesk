@@ -24,6 +24,12 @@
       </div>
       <button type="submit">Đăng nhập</button>
       <p id="login-error" class="error" hidden></p>
+      <p class="muted small login-install">Cài lên máy cần điều khiển (bộ cài sẽ hỏi mã truy cập):<br>
+        <a href="/dl/RemoteDesk-Agent-Setup.exe">Windows</a> ·
+        <a href="/dl/RemoteDesk-Agent-Installer.pkg">macOS</a>
+        <span class="muted">— kèm app điều khiển:</span>
+        <a href="/dl/RemoteDesk-Setup.exe">Windows</a> ·
+        <a href="/dl/RemoteDesk-Installer.pkg">macOS</a></p>
     </form>
   </section>
 
@@ -47,24 +53,25 @@
     <details id="install" class="install">
       <summary>Cài RemoteDesk lên máy tính</summary>
       <p class="muted small"><b>Agent + App</b>: máy được điều khiển, và có app RemoteDesk để điều khiển máy khác. <b>Chỉ agent</b>: máy chỉ để được điều khiển (điều khiển nó từ trình duyệt / iPhone).</p>
+      <p class="muted small">Bộ cài dùng chung cho mọi người. Khi cài, nhập <b>mã truy cập</b>: máy vào nhóm máy của mã đó, và ai đăng nhập bằng mã đó sẽ điều khiển được. Chạy lại bộ cài và nhập mã khác để chuyển máy sang nhóm khác.</p>
       <div class="install-grid">
         <div class="install-card">
           <h2>⊞ Windows</h2>
-          <a id="dl-win-exe" class="btn" href="#">Tải bộ cài · Agent + App</a>
-          <a id="dl-win-exe-agent" class="btn btn-secondary" href="#">Tải bộ cài · Chỉ agent</a>
+          <a id="dl-win-exe" class="btn" href="/dl/RemoteDesk-Setup.exe">Tải bộ cài · Agent + App</a>
+          <a id="dl-win-exe-agent" class="btn btn-secondary" href="/dl/RemoteDesk-Agent-Setup.exe">Tải bộ cài · Chỉ agent</a>
           <ol class="steps small muted">
             <li>Bấm đúp file vừa tải. Nếu hiện “Windows protected your PC”: <b>More info</b> → <b>Run anyway</b>.</li>
-            <li><b>Yes</b> khi hỏi quyền Admin → <b>Tiến</b> → <b>Cài đặt</b> → <b>Hoàn thành</b>.</li>
+            <li><b>Yes</b> khi hỏi quyền Admin → <b>Tiến</b> → nhập <b>mã truy cập</b> → <b>Cài đặt</b> → <b>Hoàn thành</b>.</li>
             <li>Cài đè lên bản cũ được, máy giữ nguyên tên. Gỡ: Settings › Apps › RemoteDesk.</li>
           </ol>
         </div>
         <div class="install-card">
           <h2> macOS</h2>
-          <a id="dl-mac-pkg" class="btn" href="#">Tải bộ cài · Agent + App</a>
-          <a id="dl-mac-pkg-agent" class="btn btn-secondary" href="#">Tải bộ cài · Chỉ agent</a>
+          <a id="dl-mac-pkg" class="btn" href="/dl/RemoteDesk-Installer.pkg">Tải bộ cài · Agent + App</a>
+          <a id="dl-mac-pkg-agent" class="btn btn-secondary" href="/dl/RemoteDesk-Agent-Installer.pkg">Tải bộ cài · Chỉ agent</a>
           <ol class="steps small muted">
             <li>Bấm đúp file .pkg. Nếu macOS chặn: System Settings › Privacy &amp; Security › <b>Open Anyway</b>.</li>
-            <li>Continue → Install (nhập mật khẩu Mac).</li>
+            <li>Continue → Install (nhập mật khẩu Mac) → nhập <b>mã truy cập</b>.</li>
             <li>Bật <b>RemoteDesk</b> trong <b>Screen &amp; System Audio Recording</b> và <b>Accessibility</b> (chỉ lần đầu).</li>
           </ol>
           <p class="muted small">Cần ffmpeg — bộ cài tự cài qua Homebrew nếu máy có Homebrew.</p>
@@ -79,7 +86,7 @@
         <div class="cmd"><code id="cmd-mac-full"></code><button data-copy="cmd-mac-full">Copy</button></div>
         <div class="cmd"><code id="cmd-mac-agent"></code><button data-copy="cmd-mac-agent">Copy</button></div>
       </details>
-      <p class="muted small">⚠︎ Bộ cài chứa mã truy cập — đừng gửi cho người khác.</p>
+      <p class="muted small">⚠︎ Các lệnh dòng lệnh ở trên có chứa mã truy cập của bạn — đừng gửi cho người khác. Bộ cài thì gửi thoải mái.</p>
     </details>
     <p id="install-hint" class="muted small center" hidden></p>
     <p id="unsupported" class="error center" hidden>Trình duyệt này không hỗ trợ WebCodecs. Hãy dùng Chrome, Edge hoặc Safari mới.</p>

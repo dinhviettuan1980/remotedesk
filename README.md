@@ -33,13 +33,13 @@
 
 ## Bảo mật
 
-Mỗi token là một người dùng riêng: token chỉ thấy và điều khiển các máy được cài bằng chính token đó.
+Mỗi token (mã truy cập) là một nhóm máy: admin tạo mã, máy cài bằng mã nào thì vào nhóm đó, và ai đăng nhập bằng mã đó thì thấy và điều khiển mọi máy trong nhóm. Trong một nhóm mọi người dùng chung mã, không phân biệt quản lý / thành viên.
 
 - **Admin**: `REMOTE_TOKEN` trong `relay/.env` trên VPS (bản sao ở `.env` local, không commit). Admin tạo / đổi mã / khoá / xoá người dùng ở trang `#/admin`, nhưng không thấy máy của họ.
-- **Người dùng**: lưu ở `data/users.json` trên VPS (ngoài thư mục deploy, quyền 0600). Bấm "Copy tin nhắn gửi họ" để gửi link cài + mã.
+- **Người dùng**: lưu ở `data/users.json` trên VPS (ngoài thư mục deploy, quyền 0600). Bấm "Copy tin nhắn gửi họ" để gửi mã + link bộ cài chung.
 - Agent gửi token trong header.
 - Trình duyệt nhập token một lần, sau đó giữ cookie HttpOnly (id người dùng + HMAC của token, không phải token). Đổi mã hoặc khoá thì cookie, máy và phiên đang xem của người đó bị ngắt ngay.
-- Bộ cài `.pkg` của Mac không chứa token: nó đọc token từ link tải mà macOS lưu kèm file, nếu không có thì hỏi.
+- **Bộ cài dùng chung, không chứa mã**: ai cũng tải được (kể cả từ trang đăng nhập). Khi cài, bộ cài hỏi mã truy cập và kiểm tra với relay (`/api/token-check`); máy đã cài thì để trống để giữ nhóm cũ, nhập mã khác để chuyển nhóm. Link có `?t=` (và cập nhật agent từ xa) vẫn mang sẵn mã và cài không cần hỏi.
 - Đăng nhập sai 10 lần thì IP bị khoá 15 phút. nginx cũng giới hạn tốc độ `/login`.
 - WebSocket của viewer kiểm tra Origin.
 
@@ -47,14 +47,15 @@ Lộ token nghĩa là người khác điều khiển được các máy của to
 
 ## Cài đặt
 
-Mở `https://remote.tuandv.id.vn` → đăng nhập → **Cài RemoteDesk lên máy tính**. Mỗi hệ điều hành có 2 lựa chọn:
+Mở `https://remote.tuandv.id.vn`, tải bộ cài (trang đăng nhập, hoặc sau khi đăng nhập: **Cài RemoteDesk lên máy tính**), chạy, nhập **mã truy cập** khi được hỏi. Mỗi hệ điều hành có 2 lựa chọn:
 
 | | Chỉ agent | Agent + App |
 |---|---|---|
 | Máy được điều khiển | ✓ | ✓ |
 | App RemoteDesk để điều khiển máy khác | — (dùng trình duyệt / iPhone) | ✓ Desktop + Start Menu (Win) / Applications (Mac) |
-| Windows | `RemoteDesk-Agent-Setup.cmd` | `RemoteDesk-Setup.cmd` |
-| macOS | `curl … install.sh?t=…&app=0 \| bash` | `curl … install.sh?t=… \| bash` |
+| Windows | `/dl/RemoteDesk-Agent-Setup.exe` | `/dl/RemoteDesk-Setup.exe` |
+| macOS | `/dl/RemoteDesk-Agent-Installer.pkg` | `/dl/RemoteDesk-Installer.pkg` |
+| Dòng lệnh (mang sẵn mã) | `curl … install.sh?t=…&app=0 \| bash` / `RemoteDesk-Agent-Setup.cmd` | `curl … install.sh?t=… \| bash` / `RemoteDesk-Setup.cmd` |
 
 - Windows: agent + ffmpeg vào `C:\ProgramData\RemoteDesk`, chạy bằng Task Scheduler khi đăng nhập (quyền cao nhất), tắt sleep khi cắm điện.
 - macOS: agent là `~/Library/Application Support/RemoteDesk/RemoteDesk.app` (LaunchAgent); cần cấp **Screen Recording** + **Accessibility** cho RemoteDesk. Bộ cài chỉ thay agent khi có bản mới (so hash), nên chạy lại không làm mất quyền.

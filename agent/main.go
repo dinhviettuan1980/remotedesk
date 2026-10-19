@@ -21,10 +21,15 @@ func main() {
 	check := flag.Bool("check", false, "self-test: detect encoders, capture 3 s of screen, then exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	importCfg := flag.String("import-config", "", "installer use: merge server+token from this JSON file into config.json and exit")
+	tokenFile := flag.String("token-file", "", "installer use: access code typed during setup (overrides the JSON's token; empty = keep the current one)")
+	checkTok := flag.String("check-token", "", "installer use: JSON file with the server; exit 0 if -token-file's code is valid, 3 if rejected, 4 if unreachable")
 	flag.Parse()
 
+	if *checkTok != "" {
+		os.Exit(checkToken(*checkTok, *tokenFile))
+	}
 	if *importCfg != "" {
-		if err := importConfig(*importCfg); err != nil {
+		if err := importConfig(*importCfg, *tokenFile); err != nil {
 			attachConsole()
 			fmt.Fprintln(os.Stderr, "import-config:", err)
 			os.Exit(1)

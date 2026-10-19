@@ -161,10 +161,6 @@ async function loadInstall() {
     const r = await fetch('/api/install', { cache: 'no-store' });
     if (!r.ok) return;
     const i = await r.json();
-    $('dl-win-exe').href = i.full.windowsExe;
-    $('dl-win-exe-agent').href = i.agent.windowsExe;
-    $('dl-mac-pkg').href = i.full.macPkg;
-    $('dl-mac-pkg-agent').href = i.agent.macPkg;
     $('cmd-win-full').textContent = i.full.windowsPs;
     $('cmd-win-agent').textContent = i.agent.windowsPs;
     $('cmd-mac-full').textContent = i.full.mac;
@@ -1919,14 +1915,15 @@ function userMessage(u) {
   return [
     `RemoteDesk – hướng dẫn cho ${u.name}`,
     '',
-    '1) Cài lên máy cần được điều khiển (tải bằng chính link này):',
-    `   • Windows: ${u.install.agent.windowsExe}`,
-    `   • Mac: ${u.install.agent.macPkg}`,
+    `Mã truy cập: ${u.token}`,
     '',
-    `2) Xem / điều khiển từ trình duyệt hoặc điện thoại: ${location.origin}`,
-    `   Mã truy cập: ${u.token}`,
+    '1) Cài lên máy cần được điều khiển, khi bộ cài hỏi thì nhập mã truy cập ở trên:',
+    `   • Windows: ${location.origin}/dl/RemoteDesk-Agent-Setup.exe`,
+    `   • Mac: ${location.origin}/dl/RemoteDesk-Agent-Installer.pkg`,
     '',
-    'Giữ kín link và mã này: ai có chúng là điều khiển được máy của bạn.',
+    `2) Xem / điều khiển từ trình duyệt hoặc điện thoại: ${location.origin} (đăng nhập bằng mã truy cập)`,
+    '',
+    'Giữ kín mã này: ai có mã là điều khiển được mọi máy đã cài bằng mã đó.',
   ].join('\n');
 }
 

@@ -216,3 +216,4 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 
 .audit { list-style: none; padding: 0; margin: 6px 0 0; }
 .audit li { padding: 5px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-variant-numeric: tabular-nums; }
+.login-install { line-height: 1.7; border-top: 1px solid var(--line); padding-top: 10px; }

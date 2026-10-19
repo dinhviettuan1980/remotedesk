@@ -328,13 +328,19 @@ const SETUP_EXES = {
   '/dl/RemoteDesk-Agent-Setup.exe': false, // agent only
 };
 
+// token null: the shared installer anyone may download; it asks for the access
+// code and checks it with /api/token-check.
 function setupExe(req, token, app) {
   const base = fs.readFileSync(path.join(DIST_DIR, 'RemoteDesk-Setup-base.exe'));
-  const cfg = Buffer.from(JSON.stringify({ server: requestOrigin(req), token, app }));
+  const cfg = Buffer.from(JSON.stringify(token ? { server: requestOrigin(req), token, app } : { server: requestOrigin(req), app }));
   const len = Buffer.alloc(4);
   len.writeUInt32LE(cfg.length);
   return Buffer.concat([base, cfg, Buffer.from('RDCFG1'), len]);
 }
+
+// Installers anyone may download (they hold no access code; the code typed
+// during setup decides which group of machines this one joins).
+const PUBLIC_DL = new Set([...Object.keys(SETUP_EXES), '/dl/RemoteDesk-Installer.pkg', '/dl/RemoteDesk-Agent-Installer.pkg']);
 
 const SETUP_CMDS = {
   '/dl/RemoteDesk-Setup.cmd': true, // agent + app
@@ -423,6 +429,14 @@ const server = http.createServer(async (req, res) => {
     return send(res, 302, '', { 'Set-Cookie': `${COOKIE}=; Path=/; Max-Age=0`, Location: '/' });
   }
 
+  // Installers check the access code typed during setup.
+  if (p === '/api/token-check') {
+    if (isBlocked(ip)) return sendJsonRes(res, 429, {});
+    const t = tokenTenant(req, url);
+    if (!t) { noteFailure(ip); return sendJsonRes(res, 401, {}); }
+    return sendJsonRes(res, 200, { name: t.name });
+  }
+
   if (p.startsWith('/api/')) {
     const t = viewerTenant(req);
     if (!t) return sendJsonRes(res, 401, {});
@@ -457,12 +471,15 @@ const server = http.createServer(async (req, res) => {
     if (isBlocked(ip)) return send(res, 429, 'Too many attempts, try later');
     // Installers are rendered for the token in the link (or the logged-in tenant).
     const t = tokenTenant(req, url) || viewerTenant(req);
-    if (!t) { noteFailure(ip); return send(res, 401, 'unauthorized'); }
+    if (!t && !PUBLIC_DL.has(p)) { noteFailure(ip); return send(res, 401, 'unauthorized'); }
     const app = url.searchParams.get('app') !== '0';
 
     if (p in SETUP_EXES) {
       let body;
-      try { body = setupExe(req, t.token, SETUP_EXES[p]); } catch { return send(res, 404, 'not built'); }
+      // A link with ?t= (or the agent's remote update) keeps installing silently
+      // with that code; the plain link asks for one.
+      const linkToken = tokenTenant(req, url);
+      try { body = setupExe(req, linkToken ? linkToken.token : null, SETUP_EXES[p]); } catch { return send(res, 404, 'not built'); }
       return send(res, 200, body, {
         'Content-Type': 'application/vnd.microsoft.portable-executable',
         'Content-Disposition': `attachment; filename="${path.basename(p)}"`,

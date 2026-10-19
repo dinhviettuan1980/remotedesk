@@ -4,7 +4,9 @@
 #
 # The .pkg holds no token, so one file serves every user. The token comes from
 # the link it was downloaded with (macOS keeps it in the kMDItemWhereFroms
-# attribute), else from the existing install (update), else the user types it.
+# attribute: links with ?t=), else the user types it: that code decides which
+# group of machines this Mac joins. Left empty on a Mac that already has
+# RemoteDesk, the current code (group) is kept.
 LOG=/tmp/remotedesk-install.log
 SERVER='{{SERVER}}'
 WITH_APP='{{WITH_APP}}'
@@ -16,9 +18,14 @@ as_user() { launchctl asuser "$UIDN" sudo -u "$U" "$@"; }
 TOKEN="$(xattr -px com.apple.metadata:kMDItemWhereFroms "$PKG" 2>/dev/null | xxd -r -p |
   LC_ALL=C tr -c 'A-Za-z0-9_%?&=./:-' '\n' | grep -o '[?&]t=[A-Za-z0-9_%-]\{20,\}' | head -1 | sed 's/^[?&]t=//')"
 CFG="$(eval echo "~$U")/Library/Application Support/RemoteDesk/config.json"
-[ -z "$TOKEN" ] && [ -f "$CFG" ] && TOKEN="$(plutil -extract token raw -o - "$CFG" 2>/dev/null)"
 if [ -z "$TOKEN" ]; then
-  TOKEN="$(as_user osascript -e 'text returned of (display dialog "Nhập mã truy cập RemoteDesk (người quản trị đã gửi cho bạn):" default answer "" with hidden answer buttons {"Huỷ", "OK"} default button "OK" cancel button "Huỷ" with title "RemoteDesk")' 2>/dev/null)"
+  HAVE=""
+  [ -f "$CFG" ] && HAVE="$(plutil -extract token raw -o - "$CFG" 2>/dev/null)"
+  MSG="Nhập mã truy cập RemoteDesk (người quản trị đã gửi cho bạn).\nAi đăng nhập trang web bằng mã này sẽ xem và điều khiển được máy này."
+  [ -n "$HAVE" ] && MSG="$MSG\n\nMáy này đã cài RemoteDesk: để trống để giữ nhóm máy hiện tại, nhập mã khác để chuyển sang nhóm đó."
+  TOKEN="$(as_user osascript -e "text returned of (display dialog \"$MSG\" default answer \"\" buttons {\"Huỷ\", \"OK\"} default button \"OK\" cancel button \"Huỷ\" with title \"RemoteDesk\")" 2>/dev/null)" || exit 1
+  TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+  [ -z "$TOKEN" ] && TOKEN="$HAVE"
 fi
 TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
 echo "== $(date) installing for $U (token: $([ -n "$TOKEN" ] && echo found || echo missing))" >> "$LOG"

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -101,6 +103,58 @@ func loadConfig(explicit string) (*Config, string, error) {
 	return nil, "", fmt.Errorf("no config.json found (looked in %s)", strings.Join(candidates, ", "))
 }
 
+type installerConfig struct {
+	Server string `json:"server"`
+	Token  string `json:"token"`
+}
+
+func readInstallerConfig(src, tokenFile string) (installerConfig, error) {
+	var in installerConfig
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return in, err
+	}
+	if err := json.Unmarshal(bytes.TrimPrefix(data, []byte("\xEF\xBB\xBF")), &in); err != nil {
+		return in, err
+	}
+	if in.Server == "" {
+		return in, errors.New("installer config: server is required")
+	}
+	if tokenFile != "" {
+		if b, err := os.ReadFile(tokenFile); err == nil {
+			if t := strings.TrimSpace(string(bytes.TrimPrefix(b, []byte("\xEF\xBB\xBF")))); t != "" {
+				in.Token = t
+			}
+		}
+	}
+	return in, nil
+}
+
+// checkToken asks the relay whether the code typed during setup is valid.
+func checkToken(src, tokenFile string) int {
+	in, err := readInstallerConfig(src, tokenFile)
+	if err != nil || in.Token == "" {
+		return 3
+	}
+	req, err := http.NewRequest("GET", strings.TrimRight(in.Server, "/")+"/api/token-check", nil)
+	if err != nil {
+		return 4
+	}
+	req.Header.Set("Authorization", "Bearer "+in.Token)
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return 4
+	}
+	resp.Body.Close()
+	switch resp.StatusCode {
+	case 200:
+		return 0
+	case 401:
+		return 3
+	}
+	return 4
+}
+
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
 func slug(s string) string {
@@ -140,20 +194,13 @@ func findFFmpeg(c *Config, cfgDir string) (string, error) {
 // importConfig is run by the Windows installer: it merges server + token from
 // the installer's appended config into config.json next to the binary,
 // keeping this machine's id, name and tuning, and points at the bundled ffmpeg.
-func importConfig(src string) error {
-	var in struct {
-		Server string `json:"server"`
-		Token  string `json:"token"`
-	}
-	data, err := os.ReadFile(src)
+//
+// The shared installer carries only the server: the access code comes from
+// tokenFile (typed during setup), and an empty one keeps the current code.
+func importConfig(src, tokenFile string) error {
+	in, err := readInstallerConfig(src, tokenFile)
 	if err != nil {
 		return err
-	}
-	if err := json.Unmarshal(bytes.TrimPrefix(data, []byte("\xEF\xBB\xBF")), &in); err != nil {
-		return err
-	}
-	if in.Server == "" || in.Token == "" {
-		return errors.New("installer config: server and token are required")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -164,6 +211,13 @@ func importConfig(src string) error {
 	cfg := map[string]any{}
 	if old, err := os.ReadFile(dst); err == nil {
 		_ = json.Unmarshal(bytes.TrimPrefix(old, []byte("\xEF\xBB\xBF")), &cfg) // keep id, name, encoder…
+	}
+	if in.Token == "" {
+		if old, _ := cfg["token"].(string); old != "" {
+			in.Token = old
+		} else {
+			return errors.New("chưa có mã truy cập")
+		}
 	}
 	cfg["server"] = strings.TrimRight(in.Server, "/")
 	cfg["token"] = in.Token
