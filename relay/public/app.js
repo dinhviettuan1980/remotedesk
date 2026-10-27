@@ -1629,7 +1629,9 @@ window.addEventListener('keypress', (e) => {
 const ime = document.createElement('textarea');
 ime.className = 'ime';
 for (const [k, v] of Object.entries({ autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', tabindex: '-1', 'aria-hidden': 'true' })) ime.setAttribute(k, v);
-stage.appendChild(ime);
+// Outside the stage and fixed: typing scrolls the caret's field into view,
+// and inside the stage that dragged the zoomed screen back to its top-left.
+document.body.appendChild(ime);
 
 function imeWanted() {
   return !IS_TOUCH && !!S && S.control && agentTypesText();
