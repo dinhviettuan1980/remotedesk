@@ -306,6 +306,11 @@ func (a *Agent) input1(m *inMsg) bool {
 	case "ku":
 		a.input.Key(m.C, false)
 		a.scheduleEditCheck(false)
+	case "txt":
+		if len(m.Text) <= 64 {
+			a.input.Text(m.Text)
+			a.scheduleEditCheck(false)
+		}
 	case "ra":
 		a.input.ReleaseAll()
 	case "clip":

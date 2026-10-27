@@ -21,6 +21,18 @@ static void rd_key(int keycode, int down, unsigned long long flags) {
 	CFRelease(e);
 }
 
+// rd_text: a key event carrying the characters themselves (keycode ignored).
+static void rd_text(const UniChar *chars, int n) {
+	for (int down = 1; down >= 0; down--) {
+		CGEventRef e = CGEventCreateKeyboardEvent(NULL, 0, down ? true : false);
+		if (!e) return;
+		CGEventSetFlags(e, 0);
+		CGEventKeyboardSetUnicodeString(e, n, chars);
+		CGEventPost(kCGHIDEventTap, e);
+		CFRelease(e);
+	}
+}
+
 // CGEventCreateScrollWheelEvent is variadic, which cgo can't call directly.
 static void rd_scroll(int dy, int dx) {
 	CGEventRef e = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, dy, dx);
@@ -134,6 +146,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+	"unicode/utf16"
+	"unsafe"
 )
 
 const (
@@ -270,6 +284,15 @@ func (m *macInjector) Key(code string, down bool) {
 		delete(m.keys, code)
 	}
 	C.rd_key(C.int(kc), boolInt(down), C.ulonglong(m.flags()))
+}
+
+func (m *macInjector) Text(s string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range s { // one character per event: some apps read only the first
+		u := utf16.Encode([]rune{r})
+		C.rd_text((*C.UniChar)(unsafe.Pointer(&u[0])), C.int(len(u)))
+	}
 }
 
 func (m *macInjector) ReleaseAll() {

@@ -1499,6 +1499,23 @@ function mapCode(code) {
   return $('chk-swap').checked && SWAP[code] ? SWAP[code] : code;
 }
 
+// Agent 0.3.1+ types {t:'txt'} as Unicode characters.
+function agentTypesText() {
+  return !!(S && S.agent && verAtLeast(S.agent.ver, '0.3.1'));
+}
+
+// Keys injected without a scancode (Unikey/EVKey's Backspaces, Shift+←) arrive
+// with an empty code: recover it from the key name.
+const NAMED_KEYS = new Set(['Backspace', 'Delete', 'Enter', 'Tab', 'Escape', 'Home', 'End',
+  'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
+function physCode(e) {
+  if (e.code) return e.code;
+  if (!agentTypesText()) return ''; // older agents: as before, no text path to pair with
+  if (NAMED_KEYS.has(e.key)) return e.key;
+  if (e.key === 'Shift') return 'ShiftLeft';
+  return '';
+}
+
 function keyTargetIsUi(e) {
   const t = e.target;
   return t && (t.tagName === 'SELECT' || t.tagName === 'INPUT' || t.tagName === 'BUTTON') && $('toolbar').contains(t);
@@ -1566,29 +1583,42 @@ function syncModifiers(e) {
 }
 
 window.addEventListener('keydown', (e) => {
-  if (!S || !S.control || keyTargetIsUi(e) || !e.code) return;
+  const phys = physCode(e);
+  if (!S || !S.control || keyTargetIsUi(e) || !phys) return;
   syncModifiers(e);
-  const code = mapCode(e.code);
-  if (e.code === 'KeyV' && (e.ctrlKey || e.metaKey) && !e.repeat) {
+  const code = mapCode(phys);
+  if (phys === 'KeyV' && (e.ctrlKey || e.metaKey) && !e.repeat) {
     S.pasteKey = code;
     S.pasteTimer = setTimeout(() => { if (S && S.pasteKey) pasteViaClipboardApi(); }, 50);
     return;
   }
   e.preventDefault();
-  if (e.code === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
-  S.pressed.set(e.code, code);
+  if (phys === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
+  S.pressed.set(phys, code);
   send({ t: 'kd', c: code });
+});
+
+// Characters with no physical key: Unikey/EVKey answer a Telex/VNI key with
+// Backspaces (real keys, sent above) plus a Unicode character (VK_PACKET),
+// whose keydown has an empty code and is skipped there. Its keypress still
+// carries the character: send it as text so "ò", "ạ", ... reach the remote.
+window.addEventListener('keypress', (e) => {
+  if (!S || !S.control || keyTargetIsUi(e) || e.code || e.ctrlKey || e.metaKey || !agentTypesText()) return;
+  if (!e.key || [...e.key].length !== 1 || e.key < ' ') return;
+  e.preventDefault();
+  send({ t: 'txt', text: e.key });
 });
 
 window.addEventListener('keyup', (e) => {
   // A key pressed on the screen and released over the toolbar still goes up.
-  if (!S || !S.control || !e.code || (keyTargetIsUi(e) && !S.pressed.has(e.code))) return;
+  const phys = physCode(e);
+  if (!S || !S.control || !phys || (keyTargetIsUi(e) && !S.pressed.has(phys))) return;
   e.preventDefault();
-  const code = S.pressed.get(e.code) || mapCode(e.code); // as sent, even if ⌘/Ctrl swap changed since
+  const code = S.pressed.get(phys) || mapCode(phys); // as sent, even if ⌘/Ctrl swap changed since
   if (S.pasteKey === code) pasteViaClipboardApi(); // released before any paste event
   if (S.swallowKeyUp === code) { S.swallowKeyUp = null; return; }
-  if (e.code === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
-  S.pressed.delete(e.code);
+  if (phys === 'CapsLock') { send({ t: 'kd', c: code }); send({ t: 'ku', c: code }); return; }
+  S.pressed.delete(phys);
   send({ t: 'ku', c: code });
   // macOS browsers swallow keyup for keys released while ⌘ is held.
   if (IS_MAC_VIEWER && (e.code === 'MetaLeft' || e.code === 'MetaRight')) {

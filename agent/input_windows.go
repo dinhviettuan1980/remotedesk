@@ -3,6 +3,7 @@ package main
 import (
 	"sync"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -35,6 +36,7 @@ const (
 
 	keyExtended = 0x0001
 	keyUp       = 0x0002
+	keyUnicode  = 0x0004
 	keyScancode = 0x0008
 )
 
@@ -178,6 +180,17 @@ func (w *winInjector) Key(code string, down bool) {
 		ki.flags |= keyUp
 	}
 	sendKey(ki)
+}
+
+// Text: KEYEVENTF_UNICODE, one UTF-16 unit per event (VK_PACKET → WM_CHAR),
+// the same way Unikey types on a local machine.
+func (w *winInjector) Text(s string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, u := range utf16.Encode([]rune(s)) {
+		sendKey(keybdInput{scan: u, flags: keyUnicode})
+		sendKey(keybdInput{scan: u, flags: keyUnicode | keyUp})
+	}
 }
 
 func (w *winInjector) ReleaseAll() {

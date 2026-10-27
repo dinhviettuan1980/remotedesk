@@ -9,6 +9,9 @@ type Injector interface {
 	MouseButton(btn int, down bool)
 	Wheel(dx, dy float64) // browser pixels; positive dy = scroll down
 	Key(code string, down bool)
+	// Text types characters that have no physical key on the viewer side
+	// (what Unikey/EVKey inject after their Backspaces: "ò", "ạ", ...).
+	Text(s string)
 	ReleaseAll()
 	Wake() // nudge the display awake
 	// SetDisplay: the display being captured (mouse moves and FocusedEdit map onto it).
