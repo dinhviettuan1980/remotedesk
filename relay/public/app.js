@@ -357,6 +357,7 @@ function onControl(m) {
       onEdit(m);
       break;
     case 'fls': case 'fmeta': case 'fack': case 'fdone': case 'ferr': case 'fclip': case 'clipfiles':
+      if (m.t === 'clipfiles') S.lastClip = ''; // remote clipboard is no longer that text
       onFileMsg(m); // files.js
       break;
     case 'rtc-reset': // the agent reconnected: its peer connections are gone
@@ -373,6 +374,9 @@ function onControl(m) {
       if (navigator.clipboard && document.hasFocus()) navigator.clipboard.writeText(m.text).catch(() => {});
       break;
     case 'clipimg': // agent 0.3.0+: an image was copied on the remote machine
+      // The text last sent is no longer on the remote clipboard: pasting it
+      // again must send it again, or the remote pastes this image instead.
+      S.lastClip = '';
       if (navigator.clipboard && window.ClipboardItem && document.hasFocus()) {
         const bin = atob(m.png), bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);

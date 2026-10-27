@@ -690,6 +690,7 @@ type clipSync struct {
 	last      string
 	lastFiles string
 	lastSeq   uint64 // clipboard change counter last looked at for an image
+	push      func(string)
 	quit      chan struct{}
 }
 
@@ -697,7 +698,7 @@ type clipSync struct {
 const maxClipImage = 8 << 20
 
 func startClipSync(push func(string), pushFiles func([]string), pushImage func([]byte)) *clipSync {
-	c := &clipSync{quit: make(chan struct{}), lastSeq: clipboardSeq()}
+	c := &clipSync{quit: make(chan struct{}), lastSeq: clipboardSeq(), push: push}
 	c.last, _ = clipboardRead()
 	if fs, _ := clipboardReadFiles(); len(fs) > 0 {
 		c.lastFiles = strings.Join(fs, "\n")
@@ -753,8 +754,20 @@ func (c *clipSync) setRemote(text string) {
 	c.mu.Lock()
 	c.last = text
 	c.mu.Unlock()
-	if err := clipboardWrite(text); err != nil {
+	err := clipboardWrite(text)
+	if err != nil { // another app held the clipboard past openClipboard's retries
+		time.Sleep(100 * time.Millisecond)
+		err = clipboardWrite(text)
+	}
+	if err != nil {
 		log.Printf("clipboard write: %v", err)
+		// The viewer thinks this text is here and would not send it again:
+		// tell it what the clipboard really holds.
+		cur, _ := clipboardRead()
+		c.mu.Lock()
+		c.last = cur
+		c.mu.Unlock()
+		c.push(cur)
 	}
 }
 
