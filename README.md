@@ -44,6 +44,8 @@ Mỗi token (mã truy cập) là một nhóm máy: admin tạo mã, máy cài b�
 - **Bộ cài dùng chung, không chứa mã**: ai cũng tải được (kể cả từ trang đăng nhập). Khi cài, bộ cài hỏi mã truy cập và kiểm tra với relay (`/api/token-check`); máy đã cài thì để trống để giữ nhóm cũ, nhập mã khác để chuyển nhóm. Link có `?t=` (và cập nhật agent từ xa) vẫn mang sẵn mã và cài không cần hỏi.
 - Đăng nhập sai 10 lần thì IP bị khoá 15 phút. nginx cũng giới hạn tốc độ `/login`.
 - WebSocket của viewer kiểm tra Origin.
+- **Hỏi trước khi cho xem** (agent 0.3.3+, tuỳ chọn từng máy): thêm `"confirm": true` vào `config.json` của máy đó rồi khởi động lại agent. Mỗi phiên, máy đó hiện hộp thoại "… muốn xem và điều khiển máy này. Cho phép?"; 30 giây không trả lời là từ chối. Chưa được phép thì agent không chụp màn hình, không nhận phím/chuột, không gửi clipboard/file/âm thanh; từ chối thì viewer thoát ra. Chỉ sửa được tại máy (viewer không tắt được). Người vào sau trong một phiên đã được phép chỉ được báo, không hỏi lại. Đừng bật trên máy không có người ngồi.
+- **Cảnh báo máy offline** (tuỳ chọn): đặt `ALERT_TELEGRAM_TOKEN` (bot) + `ALERT_TELEGRAM_CHAT` trong `relay/.env` rồi restart relay. Máy mất kết nối quá `ALERT_AFTER_MIN` phút (mặc định 5) thì nhắn một tin, có lại thì nhắn thêm một tin. Chỉ máy thuộc `ALERT_TENANTS` (mặc định `admin`).
 
 Lộ token nghĩa là người khác điều khiển được các máy của token đó. Token người dùng: bấm "Đổi mã" trên trang admin rồi cài lại máy. Token admin: sửa `.env` trên VPS, restart relay, rồi cài lại các máy của admin.
 
