@@ -1,0 +1,143 @@
+# Test + build everything scripts/build.sh builds (agents, apps, installers) on
+# a macOS runner; on a v* tag also deploy the web viewer and relay/dist to the VPS.
+#
+# Secrets (Settings → Secrets and variables → Actions), all optional for
+# building; deploying needs the signing ones too:
+#   MAC_CERT_P12, MAC_CERT_PASSWORD  Apple Development certificate (.p12, base64)
+#   MAC_SIGN_ID                      its SHA-1 (default in scripts/build.sh)
+#   DEPLOY_SSH_KEY                   private key authorized for DEPLOY_HOST
+#   DEPLOY_HOST                      default pc1@103.163.216.32
+#
+# Deploying an ad-hoc signed Mac agent is refused: agents update themselves,
+# and an ad-hoc build loses Screen Recording / Accessibility on every Mac.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: go test ./...
+      - run: go build -o NUL .
+        working-directory: viewer-win
+
+  build:
+    runs-on: macos-latest
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: makensis
+        run: brew install makensis
+      - name: ffmpeg for the Windows installer (cached)
+        uses: actions/cache@v4
+        with:
+          path: build/win/ffmpeg.zip
+          key: ffmpeg-gyan-essentials-${{ github.run_id }}
+          restore-keys: ffmpeg-gyan-essentials-
+      - name: Signing certificate
+        id: sign
+        env:
+          P12: ${{ secrets.MAC_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          MAC_SIGN_ID: ${{ secrets.MAC_SIGN_ID }}
+        run: |
+          if [ -n "$P12" ]; then
+            KC="$RUNNER_TEMP/sign.keychain-db"
+            security create-keychain -p "" "$KC"
+            security set-keychain-settings -lut 21600 "$KC"
+            security unlock-keychain -p "" "$KC"
+            echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+            rm -f "$RUNNER_TEMP/cert.p12"
+            security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KC" >/dev/null
+            security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          fi
+          ID="${MAC_SIGN_ID:-$(sed -n 's/^MAC_SIGN_ID="\${MAC_SIGN_ID:-\([0-9A-F]*\)}".*/\1/p' scripts/build.sh)}"
+          if security find-identity -v -p codesigning | grep -q "$ID"; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "MAC_SIGN_ID=$ID" >> "$GITHUB_ENV"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No signing certificate: the Mac agent is ad-hoc signed and will not be deployed."
+          fi
+      - name: Build (scripts/build.sh)
+        run: ./scripts/build.sh
+      - name: Version
+        id: ver
+        run: |
+          V="$(cat relay/dist/agent-version.txt)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "v$V" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match agent version $V (agent/main.go)"; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ steps.ver.outputs.version }}
+          path: relay/dist
+          retention-days: 14
+
+  deploy:
+    needs: [test-windows, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    concurrency: deploy
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || 'pc1@103.163.216.32' }}
+      DIR: /home/pc1/remote-desk/relay
+    steps:
+      - name: Preconditions
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          [ "${{ needs.build.outputs.signed }}" = true ] || { echo "::error::Mac agent not signed with the stable certificate: not deploying."; exit 1; }
+          [ -n "$KEY" ] || { echo "::error::DEPLOY_SSH_KEY is not set."; exit 1; }
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.version }}
+          path: relay/dist
+      - name: SSH
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -T 15 "${DEPLOY_HOST#*@}" >> ~/.ssh/known_hosts 2>/dev/null
+      # The web viewer and the downloads only: both are read from disk per
+      # request, so no restart. server.js changes still need scripts/deploy.sh.
+      - name: Upload viewer + dist
+        run: |
+          R="ssh -i ~/.ssh/id_deploy"
+          rsync -az -e "$R" relay/public/ "$DEPLOY_HOST:$DIR/public/"
+          rsync -az --delete -e "$R" relay/dist/ "$DEPLOY_HOST:$DIR/dist/"
+      - name: Check
+        run: |
+          sleep 2
+          curl -fsS https://remote.tuandv.id.vn/healthz
+          echo
+          for f in app.js style.css; do
+            [ "$(curl -fsS https://remote.tuandv.id.vn/$f | sha256sum)" = "$(sha256sum < relay/public/$f)" ] || { echo "::error::$f not live"; exit 1; }
+          done
