@@ -1587,8 +1587,16 @@ function syncModifiers(e) {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (e.target === ime && (e.isComposing || e.keyCode === 229)) return; // the input method's
   const phys = physCode(e);
   if (!S || !S.control || keyTargetIsUi(e) || !phys) return;
+  // A character the keyboard layout or a typing tool (EVKey/GoTiengViet on a
+  // Mac post "à" on keycode 0 = A) put on this key: type it, not the key.
+  if (agentTypesText() && !e.ctrlKey && !e.metaKey && !e.altKey && [...e.key].length === 1 && e.key > '~') {
+    e.preventDefault();
+    send({ t: 'txt', text: e.key });
+    return;
+  }
   syncModifiers(e);
   const code = mapCode(phys);
   if (phys === 'KeyV' && (e.ctrlKey || e.metaKey) && !e.repeat) {
@@ -1613,10 +1621,37 @@ window.addEventListener('keypress', (e) => {
   send({ t: 'txt', text: e.key });
 });
 
+// Desktop viewers: an input method (macOS Vietnamese/Telex, Windows IME...)
+// only composes in a text field, never on the stage, so the remote got raw
+// "vaof". While controlling, a hidden textarea holds the focus instead of the
+// stage: plain keys still go out as keys (the keydown above cancels them), and
+// what the input method commits goes out as text.
+const ime = document.createElement('textarea');
+ime.className = 'ime';
+for (const [k, v] of Object.entries({ autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', tabindex: '-1', 'aria-hidden': 'true' })) ime.setAttribute(k, v);
+stage.appendChild(ime);
+
+function imeWanted() {
+  return !IS_TOUCH && !!S && S.control && agentTypesText();
+}
+
+stage.addEventListener('focus', () => { if (imeWanted()) ime.focus({ preventScroll: true }); });
+ime.addEventListener('compositionend', (e) => {
+  if (e.data && S && S.control) send({ t: 'txt', text: e.data });
+  ime.value = '';
+});
+ime.addEventListener('beforeinput', (e) => {
+  if (e.isComposing || e.inputType === 'insertCompositionText') return; // the input method's own
+  e.preventDefault();
+  if (e.inputType === 'insertText' && e.data && S && S.control) send({ t: 'txt', text: e.data });
+});
+
 window.addEventListener('keyup', (e) => {
   // A key pressed on the screen and released over the toolbar still goes up.
   const phys = physCode(e);
   if (!S || !S.control || !phys || (keyTargetIsUi(e) && !S.pressed.has(phys))) return;
+  // Keys the input method or the text path took never went down on the remote.
+  if (e.target === ime && !S.pressed.has(phys) && phys !== 'CapsLock') return;
   e.preventDefault();
   const code = S.pressed.get(phys) || mapCode(phys); // as sent, even if ⌘/Ctrl swap changed since
   if (S.pasteKey === code) pasteViaClipboardApi(); // released before any paste event

@@ -86,6 +86,7 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .cmd button { padding: 4px 10px; font-size: 13px; flex: none; }
 .bar-actions { display: flex; align-items: center; gap: 14px; }
 #btn-install { background: var(--accent); border-color: var(--accent); color: #fff; padding: 6px 12px; font-size: 13px; }
+.ime { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; pointer-events: none; }
 .vkb { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; font-size: 16px; border: 0; padding: 0; resize: none; }
 #session { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .btn-secondary { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
