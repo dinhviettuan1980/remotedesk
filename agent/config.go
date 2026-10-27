@@ -25,6 +25,9 @@ type Config struct {
 	Capture string `json:"capture,omitempty"` // windows: "auto", "ddagrab" or "gdigrab"
 	Display int    `json:"display,omitempty"` // 0 = primary display
 	Notify  bool   `json:"notify,omitempty"`  // show a notice on this machine when someone starts watching
+	// Confirm: ask someone at this machine before each session (consent.go).
+	// Only settable here, never from a viewer.
+	Confirm bool `json:"confirm,omitempty"`
 	// AutoUpdate: install newer agents from the relay while nobody watches (nil = on).
 	AutoUpdate      *bool  `json:"autoUpdate,omitempty"`
 	AutoUpdateTried string `json:"autoUpdateTried,omitempty"` // version already tried (autoupdate.go)

@@ -393,6 +393,13 @@ function onControl(m) {
     case 'error':
       setOverlay(m.msg);
       break;
+    case 'deny': // agent 0.3.3+ with "confirm": nobody at the machine allowed the session
+      S.closed = true; // no automatic reconnect: it would ask them again
+      clearTimeout(S.retry);
+      try { S.ws.close(); } catch { /* ignore */ }
+      closeDecoder();
+      setOverlay(`${m.msg || 'Người ở máy kia không cho phép.'} Bấm ← để quay lại, rồi mở lại máy này để hỏi lần nữa.`);
+      break;
     case 'notice': { // short status from the agent (e.g. update progress)
       setOverlay(m.msg);
       const msg = m.msg;

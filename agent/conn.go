@@ -37,7 +37,10 @@ type Agent struct {
 	sess     *Session
 	params   StreamParams
 	viewer   bool
-	dropping bool      // video backpressure: skip frames until the next keyframe
+	approved bool   // consent.go: someone at this machine allowed the session
+	asking   bool   // consent.go: the dialog is up
+	askFrom  string // consent.go: who the relay says is joining
+	dropping bool   // video backpressure: skip frames until the next keyframe
 	wsVideo  bool      // relay wants video (false while every viewer gets it P2P)
 	lastKf   time.Time // last ffmpeg (re)start
 	lastKey  time.Time // last keyframe out of the encoder
@@ -152,7 +155,7 @@ func (a *Agent) runOnce() error {
 		_ = ws.SetReadDeadline(time.Now().Add(60 * time.Second))
 		if kind == websocket.TextMessage {
 			a.handle(data)
-		} else if len(data) > 0 && data[0] == 2 {
+		} else if len(data) > 0 && data[0] == 2 && !a.isGated() {
 			a.onFileChunk(data)
 		}
 	}
@@ -289,6 +292,12 @@ func (a *Agent) handleInput(data []byte) {
 func (a *Agent) input1(m *inMsg) bool {
 	a.inMu.Lock()
 	defer a.inMu.Unlock()
+	if m.T != "ra" && a.isGated() { // consent.go: no input until someone here allows it
+		switch m.T {
+		case "mm", "md", "mu", "wh", "kd", "ku", "txt", "clip":
+			return true
+		}
+	}
 	switch m.T {
 	case "mm":
 		a.input.MouseMove(clamp01(m.X), clamp01(m.Y))
@@ -366,6 +375,12 @@ func (a *Agent) handle(data []byte) {
 		return
 	}
 	switch m.T {
+	case "setcfg", "reboot", "restart", "clipimg", "screen":
+		if a.isGated() { // consent.go: a viewer nobody allowed yet changes nothing here
+			return
+		}
+	}
+	switch m.T {
 	case "join":
 		a.join(m.StreamParams.clamp())
 	case "leave":
@@ -387,7 +402,15 @@ func (a *Agent) handle(data []byte) {
 			a.wantKeyframe("relay video on")
 		}
 	case "watcher":
-		if a.cfg.Notify {
+		if a.cfg.Confirm {
+			a.mu.Lock()
+			a.askFrom = m.From
+			allowed := a.viewer && a.approved
+			a.mu.Unlock()
+			if allowed { // joining a session already allowed: at least say so
+				go notifyUser("Có người đang xem máy này: " + m.From)
+			}
+		} else if a.cfg.Notify {
 			go notifyUser("Có người đang xem máy này: " + m.From)
 		}
 	case "setcfg":
@@ -441,7 +464,9 @@ func (a *Agent) handle(data []byte) {
 		a.closePeer(m.Vid)
 		a.closeFiles(m.Vid)
 	case "fls", "fput", "fend", "fget", "fack", "fcancel", "fclip":
-		a.onFile(&m)
+		if !a.isGated() {
+			a.onFile(&m)
+		}
 	case "update":
 		go func() {
 			log.Printf("update requested by viewer")
@@ -484,9 +509,22 @@ func (a *Agent) join(sp StreamParams) {
 	a.mu.Lock()
 	a.viewer = true
 	a.wsVideo = true
+	a.params = sp
 	if a.awake == nil {
 		a.awake = keepAwake()
 	}
+	gated := a.gated()
+	a.mu.Unlock()
+	if gated { // consent.go: starts the session once someone here allows it
+		go a.askConsent()
+		return
+	}
+	a.startViewing(sp)
+}
+
+// startViewing: clipboard sync, capture and audio for an allowed session.
+func (a *Agent) startViewing(sp StreamParams) {
+	a.mu.Lock()
 	if a.clip == nil {
 		a.clip = startClipSync(
 			func(text string) { a.sendJSON(map[string]string{"t": "clip", "text": text}) },
@@ -515,11 +553,12 @@ func (a *Agent) restart(sp StreamParams) {
 		sp.gop = lossyGop
 	}
 	a.params.gop = sp.gop
+	gated := a.gated()
 	a.mu.Unlock()
 	if old != nil {
 		old.Stop()
 	}
-	if !viewer {
+	if !viewer || gated {
 		return
 	}
 	displays := listDisplays()
@@ -558,6 +597,8 @@ func (a *Agent) leave() {
 	a.mu.Lock()
 	wasViewer := a.viewer
 	a.viewer = false
+	a.approved = false // consent.go: the next session asks again
+	a.askFrom = ""
 	s := a.sess
 	a.sess = nil
 	stopAwake := a.awake
@@ -590,7 +631,7 @@ func (a *Agent) leave() {
 // syncAudio starts or stops the audio capture to match audioVids.
 func (a *Agent) syncAudio() {
 	a.mu.Lock()
-	want := a.viewer && len(a.audioVids) > 0
+	want := a.viewer && len(a.audioVids) > 0 && !a.gated()
 	running := a.audio
 	if !want {
 		a.audio = nil
