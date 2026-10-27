@@ -722,6 +722,27 @@ function renderAgentMenu() {
   };
   add('toggle-notify', S.agentNotify ? 'Thông báo trên máy kia khi có người xem: đang bật' : 'Thông báo trên máy kia khi có người xem: đang tắt');
   add('reboot-machine', 'Khởi động lại máy kia');
+  if (agentTypesText()) add('type-clip', 'Gõ nội dung clipboard (cho ô không cho dán)');
+}
+
+// Types the viewer's clipboard text key by key instead of pasting it: login
+// screens, VM consoles and some password fields refuse a paste.
+const TYPE_MAX = 20000;
+async function typeClipboard() {
+  let text = null;
+  try { text = await navigator.clipboard.readText(); } catch { /* no permission: ask */ }
+  if (text == null) text = prompt('Dán nội dung cần gõ vào đây:');
+  if (!text) return;
+  if (text.length > TYPE_MAX) { flashNotice(`Dài quá (${text.length} ký tự, tối đa ${TYPE_MAX}).`); return; }
+  if (text.length > 2000 && !confirm(`Gõ ${text.length} ký tự sang máy kia? Có thể mất một lúc.`)) return;
+  let run = [];
+  const flush = () => { if (run.length) { send({ t: 'txt', text: run.join('') }); run = []; } };
+  for (const ch of text.replace(/\r\n?/g, '\n')) {
+    if (ch === '\n' || ch === '\t') { flush(); tapKey(ch === '\n' ? 'Enter' : 'Tab'); continue; }
+    run.push(ch);
+    if (run.length === 16) flush(); // ≤ 64 bytes of UTF-8: the agent's limit per message
+  }
+  flush();
 }
 
 // A pasted screenshot (not a copied file): browsers call it "image.png".
@@ -1005,6 +1026,8 @@ canvas.addEventListener('pointerdown', (e) => {
   stage.focus();
   canvas.setPointerCapture(e.pointerId);
   pendingMove = norm(e);
+  S.clickAt = pendingMove; // until the agent reports a caret there
+  S.editAt = null;
   flushMove();
   send({ t: 'md', b: e.button });
 });
@@ -1460,8 +1483,8 @@ function restoreKbZoom() {
 // a tap, so the web page offers a button; the iOS app can open it directly.
 let kbOfferTimer = null;
 function onEdit(m) {
+  if (S && m.x != null) S.editAt = { x: m.x, y: m.y }; // also where desktop composition shows
   if (!IS_TOUCH || !S || !S.control) return;
-  if (m.x != null) S.editAt = { x: m.x, y: m.y };
   const offer = $('kb-offer');
   if (document.activeElement === vkb) { if (m.on) revealEdit(); return; }
   if (!m.click) return;
@@ -1638,10 +1661,37 @@ function imeWanted() {
 }
 
 stage.addEventListener('focus', () => { if (imeWanted()) ime.focus({ preventScroll: true }); });
+
+// The word being composed (macOS Telex shows nothing remotely until it is
+// committed) floats over the remote caret, else where the user last clicked.
+const imeShow = document.createElement('div');
+imeShow.className = 'ime-show';
+imeShow.hidden = true;
+stage.appendChild(imeShow);
+// The hidden field follows the caret too, so the input method's own popups
+// (candidates, accents) open there. Clamped: fixed, it never scrolls anything.
+function placeIme() {
+  const at = S && (S.editAt || S.clickAt);
+  if (!at) return;
+  const r = canvas.getBoundingClientRect();
+  ime.style.left = `${Math.min(innerWidth - 2, Math.max(0, r.left + at.x * r.width))}px`;
+  ime.style.top = `${Math.min(innerHeight - 2, Math.max(0, r.top + at.y * r.height))}px`;
+}
+ime.addEventListener('compositionstart', placeIme);
+ime.addEventListener('compositionupdate', (e) => {
+  const at = S && (S.editAt || S.clickAt);
+  if (!e.data || !at) { imeShow.hidden = true; return; }
+  imeShow.textContent = e.data;
+  imeShow.style.left = `${canvas.offsetLeft + at.x * canvas.offsetWidth}px`;
+  imeShow.style.top = `${canvas.offsetTop + at.y * canvas.offsetHeight}px`;
+  imeShow.hidden = false;
+});
 ime.addEventListener('compositionend', (e) => {
+  imeShow.hidden = true;
   if (e.data && S && S.control) send({ t: 'txt', text: e.data });
   ime.value = '';
 });
+ime.addEventListener('blur', () => { imeShow.hidden = true; });
 ime.addEventListener('beforeinput', (e) => {
   if (e.isComposing || e.inputType === 'insertCompositionText') return; // the input method's own
   e.preventDefault();
@@ -1805,6 +1855,10 @@ $('sel-keys').onchange = (e) => {
   }
   if (v === 'toggle-notify') {
     sendNow({ t: 'setcfg', notify: !S.agentNotify });
+    return;
+  }
+  if (v === 'type-clip') {
+    typeClipboard();
     return;
   }
   if (v === 'reboot-machine') {
