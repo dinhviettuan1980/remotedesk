@@ -21,7 +21,9 @@
   - Âm thanh: agent thu PCM rồi đưa ffmpeg dạng WAV qua stdin, ffmpeg nén `libopus` (có trong ffmpeg Homebrew và bản gyan.dev essentials).
 - **Relay** ([relay/server.js](relay/server.js)) không giải mã video, tốn khoảng 50 MB RAM. Khi viewer nhận chậm, relay bỏ frame cho tới keyframe kế tiếp.
 - **Viewer** ([relay/public/](relay/public/)) là trang web, máy điều khiển không cần cài gì.
-  - Phím được gửi theo vị trí vật lý (`KeyboardEvent.code`), nên Telex/Unikey ở máy kia gõ tiếng Việt bình thường.
+  - Phím được gửi theo vị trí vật lý (`KeyboardEvent.code`).
+  - **Gõ tiếng Việt** bằng bộ gõ của **máy điều khiển** (agent 0.3.1+): bộ gõ macOS (Telex/VNI), Windows IME, Unikey/EVKey/GoTiengViet. Viewer giữ focus ở một ô nhập ẩn để bộ gõ ghép chữ, rồi gửi chữ đã ghép (`{"t":"txt"}`); agent gõ chữ đó bằng `SendInput` + `KEYEVENTF_UNICODE` (Windows) / `CGEventKeyboardSetUnicodeString` (Mac), nên vào được cả ô nhập của app Electron/WebView. Khi đó **tắt bộ gõ ở máy bị điều khiển**. Từ đang ghép (bộ gõ macOS chỉ chốt khi hết từ) hiện ở vị trí con trỏ chữ. Agent cũ hơn 0.3.1: như trước, bộ gõ ở máy kia gõ.
+  - "Phím…" → **Gõ nội dung clipboard**: gõ từng ký tự thay vì dán, cho màn hình đăng nhập, console máy ảo, ô không cho dán (agent 0.3.1+).
   - Có tuỳ chọn đổi ⌘ ⇄ Ctrl khi điều khiển khác hệ điều hành.
   - Clipboard đồng bộ hai chiều.
   - Chuyển file hai chiều: copy file rồi ⌘V/Ctrl+V vào màn hình máy kia; kéo thả; nút 📁 để duyệt và tải file của máy kia (agent 0.2.2+).
@@ -65,7 +67,7 @@ Mở `https://remote.tuandv.id.vn`, tải bộ cài (trang đăng nhập, hoặc
 
 `remote-agent -check` để tự kiểm tra trên máy; log ở `agent.log` cạnh `config.json`.
 
-**Cập nhật agent**: trang danh sách máy hiện "có bản mới" và nút **Cập nhật** cạnh máy chạy bản cũ (Windows 0.2.1+, Mac 0.2.3+), không cần vào phiên. Trong phiên: "Phím…" → "Cập nhật agent". **Lịch sử truy cập**: mục cuối trang danh sách máy (ai xem máy nào, lúc nào, bao lâu, từ thiết bị / IP nào).
+**Cập nhật agent**: trang danh sách máy hiện "có bản mới" và nút **Cập nhật** cạnh máy chạy bản cũ (Windows 0.2.1+, Mac 0.2.3+), không cần vào phiên. Trong phiên: "Phím…" → "Cập nhật agent". Từ 0.3.3 agent **tự cập nhật**: 10 phút sau khi chạy rồi cứ 6 giờ một lần, nếu `dist/agent-version.txt` trên relay mới hơn và không có ai đang xem thì tự cài. Mỗi bản chỉ thử một lần (`autoUpdateTried` trong `config.json`); `"autoUpdate": false` để tắt. **Lịch sử truy cập**: mục cuối trang danh sách máy (ai xem máy nào, lúc nào, bao lâu, từ thiết bị / IP nào).
 
 ## Phát triển & deploy
 
@@ -74,6 +76,8 @@ Mở `https://remote.tuandv.id.vn`, tải bộ cài (trang đăng nhập, hoặc
 SSHPASS=… ./scripts/deploy.sh      # build + rsync relay + restart systemd
 SSHPASS=… ./scripts/deploy.sh --setup   # lần đầu: token, nginx, certbot
 ```
+
+**GitHub Actions** ([.github/workflows/build.yml](.github/workflows/build.yml)): mỗi lần push lên `main`, test trên Windows và chạy `scripts/build.sh` trên runner macOS (artifact `dist-<version>`, giữ 14 ngày). Push tag `v<version>` (khớp `version` trong `agent/main.go`) thì deploy thêm `relay/public` + `relay/dist` lên VPS (không restart; sửa `server.js` vẫn dùng `deploy.sh`). Deploy cần secrets `MAC_CERT_P12` + `MAC_CERT_PASSWORD` (chứng chỉ Apple Development, base64) và `DEPLOY_SSH_KEY`; thiếu chứng chỉ thì **không deploy**, vì agent Mac ký ad-hoc sẽ mất quyền Screen Recording / Accessibility khi các máy tự cập nhật.
 
 ## Giới hạn hiện tại
 
