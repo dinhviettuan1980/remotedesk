@@ -111,6 +111,44 @@ function auditRead(tenantId, n = 50) {
 // TURN (coturn, scripts/setup-turn.sh): time-limited credentials per the
 // "REST API" scheme — username "<expiry>:<label>", password = HMAC-SHA1(secret,
 // username). Handed to viewers in "hello" and to agents as {"t":"ice"}.
+// Offline alerts (optional): ALERT_TELEGRAM_TOKEN (bot) + ALERT_TELEGRAM_CHAT
+// in .env. A machine gone for ALERT_AFTER_MIN minutes (default 5) gets one
+// message, and one more when it is back. Only the tenants in ALERT_TENANTS
+// (default "admin"): the admin must not learn about other users' machines.
+// Machines that never reconnect after a relay restart are not noticed.
+const ALERT_TG_TOKEN = process.env.ALERT_TELEGRAM_TOKEN || '';
+const ALERT_TG_CHAT = process.env.ALERT_TELEGRAM_CHAT || '';
+const ALERT_AFTER_MS = (Number(process.env.ALERT_AFTER_MIN) || 5) * 60_000;
+const ALERT_TENANTS = new Set((process.env.ALERT_TENANTS || 'admin').split(',').map((s) => s.trim()).filter(Boolean));
+const offline = new Map(); // agent key → { name, since, timer, alerted }
+
+function sendAlert(text) {
+  fetch(`https://api.telegram.org/bot${ALERT_TG_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: ALERT_TG_CHAT, text }),
+    signal: AbortSignal.timeout(15_000),
+  }).then((r) => { if (!r.ok) console.log(`alert: Telegram HTTP ${r.status}`); })
+    .catch((e) => console.log(`alert: ${e.message}`));
+}
+
+const hhmm = (t) => new Date(t).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+
+function agentDown(key, agent) {
+  if (!ALERT_TG_TOKEN || !ALERT_TG_CHAT || !ALERT_TENANTS.has(agent.tenant)) return;
+  const o = { name: agent.name, since: Date.now(), alerted: false };
+  o.timer = setTimeout(() => { o.alerted = true; sendAlert(`🔴 ${o.name}: offline từ ${hhmm(o.since)}`); }, ALERT_AFTER_MS);
+  offline.set(key, o);
+}
+
+function agentUp(key) {
+  const o = offline.get(key);
+  if (!o) return;
+  offline.delete(key);
+  clearTimeout(o.timer);
+  if (o.alerted) sendAlert(`🟢 ${o.name}: online lại (mất kết nối ${Math.round((Date.now() - o.since) / 60_000)} phút)`);
+}
+
 const TURN_SECRET = process.env.TURN_SECRET || '';
 const TURN_HOST = process.env.TURN_HOST || new URL(PUBLIC_URL).hostname;
 const TURN_TTL = 24 * 3600;
@@ -594,6 +632,7 @@ function onAgent(ws, url, ip, tenant) {
     for (const v of agent.viewers) { v.p2p = false; sendJson(v.ws, { t: 'rtc-reset' }); }
   }
   agents.set(key, agent);
+  agentUp(key);
   ws.isAlive = true;
   console.log(`agent up: ${key} (${agent.name}, ${agent.os} ${agent.ver}) from ${ip}`);
   sendJson(ws, { t: 'ice', servers: iceServers(`a-${tenant.id}`) });
@@ -639,6 +678,7 @@ function onAgent(ws, url, ip, tenant) {
     clearInterval(iceTimer);
     if (agents.get(key) !== agent) return; // replaced
     agents.delete(key);
+    agentDown(key, agent);
     console.log(`agent down: ${key} (${code})`);
     for (const v of agent.viewers) v.ws.close(4404, 'agent offline');
   });
