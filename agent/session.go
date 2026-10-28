@@ -217,6 +217,9 @@ func tryPipelines(ctx context.Context, ff string, cfg *Config, sp StreamParams, 
 		return false, err
 	}
 	pipes := platformPipelines(ff, cfg, usableEncoders(ff, cfg), sp)
+	if len(pipes) == 0 {
+		return false, errors.New("không thấy màn hình nào để chụp (máy đang ngủ/khóa, hoặc quyền Screen Recording chưa có hiệu lực)")
+	}
 	lastGoodMu.Lock()
 	lg := lastGood
 	lastGoodMu.Unlock()

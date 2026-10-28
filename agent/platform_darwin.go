@@ -69,11 +69,14 @@ func avfoundationScreens(ff string, displays int) []string {
 
 func platformPipelines(ff string, cfg *Config, encoders []string, sp StreamParams) []pipeline {
 	screens := avfoundationScreens(ff, len(listDisplays()))
-	dev := "1"
+	if len(screens) == 0 {
+		// No "Capture screen N" listed (display asleep/locked, or Screen Recording
+		// not effective): any hardcoded index would be "Invalid device index".
+		return nil
+	}
+	dev := screens[0]
 	if i := sp.disp.capIdx; i >= 0 && i < len(screens) {
 		dev = screens[i]
-	} else if len(screens) > 0 {
-		dev = screens[0]
 	}
 	var out []pipeline
 	for _, pix := range []string{"nv12", ""} {
