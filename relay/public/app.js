@@ -340,7 +340,7 @@ function onControl(m) {
       const key = `swap:${m.agent.id}`;
       const def = IS_MAC_VIEWER !== (m.agent.os === 'darwin'); // swap by default across OSes
       $('chk-swap').checked = prefs.get(key, def);
-      S.zoom = prefs.get(`zoom:${m.agent.id}`, 'fit');
+      S.zoom = prefs.get(`zoom:${m.agent.id}`, IS_PHONE ? 'height' : 'fit');
       syncZoomSelect();
       fitCanvas();
       $('key-meta').textContent = m.agent.os === 'darwin' ? '⌘' : 'Win';
@@ -485,6 +485,8 @@ function draw(src, w, h) {
     S.vw = canvas.width = w;
     S.vh = canvas.height = h;
     fitCanvas();
+    // Fit to height (phones): start on the middle of the remote screen.
+    if (S.zoom === 'height') stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
   }
   S.ctx.drawImage(src, 0, 0);
   if (S.frames === 0) setOverlay('');
@@ -920,6 +922,7 @@ function fitCanvas() {
   let scale;
   if (z === 'fit') scale = Math.min(st.clientWidth / S.vw, st.clientHeight / S.vh);
   else if (z === 'width') scale = st.clientWidth / S.vw;
+  else if (z === 'height') scale = st.clientHeight / S.vh;
   else scale = Number(z) || 1;
   const c = $('screen');
   c.style.width = `${Math.floor(S.vw * scale)}px`;
@@ -1076,6 +1079,9 @@ stage.addEventListener('wheel', (e) => {
 // drag pans the view, pinch zooms.
 
 const IS_TOUCH = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
+// Phones open a session fitted to height: "fit" in portrait leaves the remote
+// screen a thin strip with unreadable text; one-finger moves pan sideways.
+const IS_PHONE = IS_TOUCH && Math.min(screen.width, screen.height) < 600;
 const tpCursor = $('tp-cursor');
 let touch = null;
 

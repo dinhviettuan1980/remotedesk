@@ -140,6 +140,7 @@
         <select id="sel-zoom" title="Zoom">
           <option value="fit">🔍 Vừa khung</option>
           <option value="width">🔍 Vừa chiều ngang</option>
+          <option value="height">🔍 Vừa chiều cao</option>
           <option value="1">🔍 100%</option>
           <option value="1.25">🔍 125%</option>
           <option value="1.5">🔍 150%</option>
@@ -185,8 +186,11 @@
       <button id="btn-more" title="Thêm">⋯</button>
     </div>
     <button id="tb-handle" class="tb-handle" title="Hiện thanh công cụ" hidden>▾</button>
-    <div id="stage" class="stage" tabindex="0">
-      <canvas id="screen"></canvas>
+    <!-- Overlays sit beside the stage, not in it: the stage scrolls when zoomed. -->
+    <div class="stage-wrap">
+      <div id="stage" class="stage" tabindex="0">
+        <canvas id="screen"></canvas>
+      </div>
       <div id="overlay" class="overlay">Đang kết nối…</div>
       <div id="fs-hint" class="fs-hint" hidden></div>
       <div id="clip-toast" class="clip-toast" hidden>
