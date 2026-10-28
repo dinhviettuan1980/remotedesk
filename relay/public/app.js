@@ -8,9 +8,12 @@ const QUALITY = {
   balanced: { fps: 30, maxw: 1920, kbps: 3500 },
   sharp: { fps: 60, maxw: 1920, kbps: 8000 },
   max: { fps: 60, maxw: 3840, kbps: 16000 },
+  // "Tự động" on a weak link: same bitrate as eco, but full resolution at a
+  // lower frame rate. Text stays sharp; 720p scaled up to the window blurs it.
+  text: { fps: 15, maxw: 1920, kbps: 1500 },
 };
 // "Tự động" moves between these as the network allows (autoQuality).
-const AUTO_LEVELS = ['eco', 'balanced'];
+const AUTO_LEVELS = ['text', 'balanced'];
 // Fallback; the relay's hello carries STUN + TURN (coturn on the VPS).
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 const P2P_SUPPORTED = 'RTCPeerConnection' in window && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
@@ -984,7 +987,7 @@ async function updateStats() {
     // receiving well under the frame rate means the link is too slow.
     autoQuality(rx < currentQuality().fps * 0.4, 'relay');
   }
-  if (prefs.get('quality', 'auto') === 'auto') path += ` · tự động ${AUTO_LEVELS[s.aq.level] === 'eco' ? '720p' : '1080p'}`;
+  if (prefs.get('quality', 'auto') === 'auto') path += ` · tự động ${AUTO_LEVELS[s.aq.level] === 'text' ? '1080p 15 fps' : '1080p'}`;
   const enc = $('sess-stats').dataset.enc;
   $('sess-stats').textContent = s.vw ? `${s.vw}×${s.vh} · ${fps} fps · ${kbps} kbps · ${path}${enc ? ' · ' + enc : ''}` : '';
   $('menu-stats').textContent = $('sess-stats').textContent;

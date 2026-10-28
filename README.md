@@ -28,7 +28,7 @@
   - Clipboard đồng bộ hai chiều.
   - Chuyển file hai chiều: copy file rồi ⌘V/Ctrl+V vào màn hình máy kia; kéo thả; nút 📁 để duyệt và tải file của máy kia (agent 0.2.2+).
   - **Nhiều màn hình** (agent 0.2.6+): ô 🖥 trên thanh công cụ (chỉ hiện khi máy kia có từ 2 màn hình) chọn màn hình để xem. Chuột, bàn phím và vị trí con trỏ chữ theo màn hình đang xem. Trình duyệt nhớ lựa chọn theo từng máy, giống zoom.
-  - **Chất lượng tự động** (mặc định): viewer đo mất gói / số frame nhận được, tự hạ xuống 720p khi mạng xấu và nâng lại sau một phút ổn định. Đã ở 720p mà đường TURN vẫn mất gói thì bỏ TURN trong phiên đó (P2P trực tiếp nếu được, không thì relay). Agent 0.3.0 tự chuyển sang keyframe mỗi giây khi P2P liên tục mất hình.
+  - **Chất lượng tự động** (mặc định): viewer đo mất gói / số frame nhận được, luôn giữ 1080p; mạng xấu thì hạ xuống 15 fps (cùng bitrate với 720p nhưng chữ vẫn nét) và nâng lại 30 fps sau một phút ổn định. Đã ở 15 fps mà đường TURN vẫn mất gói thì bỏ TURN trong phiên đó (P2P trực tiếp nếu được, không thì relay). Agent 0.3.0 tự chuyển sang keyframe mỗi giây khi P2P liên tục mất hình.
   - **Clipboard ảnh** (agent 0.3.0+): chụp màn hình rồi ⌘V/Ctrl+V vào máy kia là dán ảnh; ảnh copy ở máy kia vào thẳng clipboard máy này.
   - Menu "Phím…" (agent 0.3.0+): **Khởi động lại máy kia**; bật/tắt **thông báo trên máy kia khi có người xem** (mặc định tắt, lưu trong `config.json` của máy đó).
   - **Âm thanh** (agent 0.2.6+): nút 🔇/🔊, mặc định tắt; agent chỉ thu tiếng khi có viewer đang bật. Opus 96 kbps, đi qua relay (WebSocket) hoặc track WebRTC khi P2P. Ngoài thời gian truyền: nén khoảng 20 ms, viewer đệm khoảng 60 ms. Cần WebCodecs `AudioDecoder` giải được Opus (Chrome/Edge, app Windows); trình duyệt không có thì nút bị ẩn.
