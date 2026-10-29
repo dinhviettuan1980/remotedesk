@@ -69,12 +69,24 @@ Mở `https://remote.tuandv.id.vn`, tải bộ cài (trang đăng nhập, hoặc
 
 `remote-agent -check` để tự kiểm tra trên máy; log ở `agent.log` cạnh `config.json`.
 
+### Raspberry Pi (tab 🍓 Pi)
+
+Pi chạy agent riêng ([pi-agent/](pi-agent/), Go, không cgo), tự kết nối **ra** relay như các máy khác, nên quản lý được Pi sau NAT / 4G mà không cần IP public hay chung mạng. Trang Pi (`#/pi/<id>`, [relay/public/pi.js](relay/public/pi.js)) có:
+
+- **Tổng quan**: model, OS, uptime, tải CPU, nhiệt độ, RAM / swap / thẻ nhớ, IP, Wi‑Fi (SSID, dBm), nguồn (`vcgencmd get_throttled`), đồng bộ giờ, dịch vụ lỗi. Tự làm mới mỗi 5 giây.
+- **Dịch vụ**: dịch vụ / timer systemd, những cái trong `watch` (mặc định `linh-dia-viet*`, `ld-*`, `remotedesk-pi`, `ssh`, `NetworkManager`, `bluetooth`, `bluealsa*`, `mosquitto`) và cái đang lỗi lên đầu. Restart / Start / Stop / Log (`journalctl`, 300 dòng) / Status. Không cho Stop / Disable `remotedesk-pi` và `NetworkManager` (mất đường quản lý).
+- **Thiết bị**: USB, sound card, camera, Bluetooth đang kết nối, mạng / route, cổng đang mở, kết nối ra ngoài, nguồn & nhiệt.
+- **Terminal**: shell qua pty ([xterm.js](relay/public/vendor/)), đăng nhập bằng `shellUser` (mặc định user uid 1000, tức user có sudo trên Pi OS). Hàng phím Esc / Tab / Ctrl / ^C / mũi tên cho điện thoại.
+- **Khởi động lại Pi**, **Cập nhật agent** (tải `dist/pi-agent-linux-<arch>`, chạy thử, thay file; systemd khởi động lại).
+
+Cài: tab Pi → **Thêm Pi**, chạy lệnh trên Pi (một lần, qua SSH): `curl -fsSL "https://remote.tuandv.id.vn/install-pi.sh?t=<mã>" | sudo bash`, hoặc bỏ `?t=` để Pi hỏi mã. Hỗ trợ arm64 (Pi 3/4/5, Zero 2), armv6 (Pi Zero / 1, Pi OS 32-bit) và amd64. Agent chạy bằng root (`remotedesk-pi.service`, `Restart=always`); cấu hình `/etc/remotedesk-pi/config.json` (0600). Id cố định lúc cài (hostname + 6 ký tự machine-id) nên đổi hostname không thành máy mới; agent không mở cổng nào trên Pi. Log: `journalctl -u remotedesk-pi -f`. Phiên mở trang Pi được ghi vào lịch sử truy cập và Pi offline thì có cảnh báo Telegram như các máy khác.
+
 **Cập nhật agent**: trang danh sách máy hiện "có bản mới" và nút **Cập nhật** cạnh máy chạy bản cũ (Windows 0.2.1+, Mac 0.2.3+), không cần vào phiên. Trong phiên: "Phím…" → "Cập nhật agent". Từ 0.3.3 agent **tự cập nhật**: 10 phút sau khi chạy rồi cứ 6 giờ một lần, nếu `dist/agent-version.txt` trên relay mới hơn và không có ai đang xem thì tự cài. Mỗi bản chỉ thử một lần (`autoUpdateTried` trong `config.json`); `"autoUpdate": false` để tắt. **Lịch sử truy cập**: mục cuối trang danh sách máy (ai xem máy nào, lúc nào, bao lâu, từ thiết bị / IP nào).
 
 ## Phát triển & deploy
 
 ```bash
-./scripts/build.sh                 # test + build agent (Windows exe, macOS universal) → relay/dist
+./scripts/build.sh                 # test + build agent (Windows exe, macOS universal, Pi linux) → relay/dist
 SSHPASS=… ./scripts/deploy.sh      # build + rsync relay + restart systemd
 SSHPASS=… ./scripts/deploy.sh --setup   # lần đầu: token, nginx, certbot
 ```

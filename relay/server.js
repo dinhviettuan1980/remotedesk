@@ -246,26 +246,28 @@ function cmpVer(a, b) {
   return 0;
 }
 
-// The agent version in dist/ (scripts/build.sh writes agent-version.txt).
-let latestCache = { at: 0, ver: '' };
-function latestAgent() {
-  if (Date.now() - latestCache.at > 30_000) {
-    let ver = '';
-    try { ver = fs.readFileSync(path.join(DIST_DIR, 'agent-version.txt'), 'utf8').trim(); } catch { /* not built */ }
-    latestCache = { at: Date.now(), ver };
-  }
-  return latestCache.ver;
+// The agent version in dist/ (scripts/build.sh writes agent-version.txt, and
+// pi-agent-version.txt for the Raspberry Pi agent, which has its own numbers).
+const latestCache = new Map(); // file → { at, ver }
+function latestAgent(os = '') {
+  const file = os === 'linux' ? 'pi-agent-version.txt' : 'agent-version.txt';
+  const c = latestCache.get(file);
+  if (c && Date.now() - c.at < 30_000) return c.ver;
+  let ver = '';
+  try { ver = fs.readFileSync(path.join(DIST_DIR, file), 'utf8').trim(); } catch { /* not built */ }
+  latestCache.set(file, { at: Date.now(), ver });
+  return ver;
 }
 
-// Agents that understand {"t":"update"}: Windows 0.2.1+, macOS 0.2.3+.
+// Agents that understand {"t":"update"}: Windows 0.2.1+, macOS 0.2.3+, every Pi agent.
 function canSelfUpdate(a) {
   if (a.os === 'windows') return cmpVer(a.ver, '0.2.1') >= 0;
   if (a.os === 'darwin') return cmpVer(a.ver, '0.2.3') >= 0;
-  return false;
+  return a.os === 'linux';
 }
 
 function agentSummary(a) {
-  const latest = latestAgent();
+  const latest = latestAgent(a.os);
   const outdated = !!latest && /^\d+(\.\d+)*$/.test(a.ver) && cmpVer(a.ver, latest) < 0;
   return {
     id: a.id, name: a.name, os: a.os, ver: a.ver, since: a.since, busy: a.viewers.size > 0, watching: a.viewers.size,
@@ -346,6 +348,7 @@ function installLinks(base, t) {
   const ps = (app) => `irm "${base}/install.ps1?t=${tk}${app ? '' : '&app=0'}" | iex`;
   const sh = (app) => `curl -fsSL "${base}/install.sh?t=${tk}${app ? '' : '&app=0'}" | bash`;
   return {
+    pi: `curl -fsSL "${base}/install-pi.sh?t=${tk}" | sudo bash`,
     full: {
       windowsExe: `${base}/dl/RemoteDesk-Setup.exe?t=${tk}`,
       macPkg: `${base}/dl/RemoteDesk-Installer.pkg?t=${tk}`,
@@ -378,7 +381,7 @@ function setupExe(req, token, app) {
 
 // Installers anyone may download (they hold no access code; the code typed
 // during setup decides which group of machines this one joins).
-const PUBLIC_DL = new Set([...Object.keys(SETUP_EXES), '/dl/RemoteDesk-Installer.pkg', '/dl/RemoteDesk-Agent-Installer.pkg']);
+const PUBLIC_DL = new Set([...Object.keys(SETUP_EXES), '/dl/RemoteDesk-Installer.pkg', '/dl/RemoteDesk-Agent-Installer.pkg', '/install-pi.sh']);
 
 const SETUP_CMDS = {
   '/dl/RemoteDesk-Setup.cmd': true, // agent + app
@@ -487,7 +490,7 @@ const server = http.createServer(async (req, res) => {
       const a = agents.get(agentKey(t.id, id));
       if (!a) return sendJsonRes(res, 404, { error: 'offline' });
       if (!canSelfUpdate(a)) return sendJsonRes(res, 400, { error: 'agent quá cũ, cần cài lại tại máy' });
-      console.log(`update requested from the device list: ${agentKey(t.id, id)} (${a.ver} → ${latestAgent()})`);
+      console.log(`update requested from the device list: ${agentKey(t.id, id)} (${a.ver} → ${latestAgent(a.os)})`);
       sendJson(a.ws, { t: 'update' });
       return sendJsonRes(res, 200, { ok: true });
     }
@@ -505,7 +508,7 @@ const server = http.createServer(async (req, res) => {
     return sendJsonRes(res, 404, {});
   }
 
-  if (p in SETUP_EXES || p in SETUP_CMDS || p === '/install.ps1' || p === '/install.sh' || p.startsWith('/dl/')) {
+  if (p in SETUP_EXES || p in SETUP_CMDS || p === '/install.ps1' || p === '/install.sh' || p === '/install-pi.sh' || p.startsWith('/dl/')) {
     if (isBlocked(ip)) return send(res, 429, 'Too many attempts, try later');
     // Installers are rendered for the token in the link (or the logged-in tenant).
     const t = tokenTenant(req, url) || viewerTenant(req);
@@ -539,6 +542,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/install.ps1') return send(res, 200, renderInstaller('install.ps1', req, t.token, app), { 'Content-Type': 'text/plain; charset=utf-8' });
     if (p === '/install.sh') return send(res, 200, renderInstaller('install.sh', req, t.token, app), { 'Content-Type': 'text/plain; charset=utf-8' });
+    // Raspberry Pi: without a code in the link the script asks for one.
+    if (p === '/install-pi.sh') return send(res, 200, renderInstaller('install-pi.sh', req, t ? t.token : '', false), { 'Content-Type': 'text/plain; charset=utf-8' });
     // Everything in dist/ is tenant-neutral (the macOS .pkg holds no token: its
     // postinstall reads it from the download URL macOS records).
     const name = path.basename(p.slice(4));
@@ -762,7 +767,8 @@ function onViewer(ws, req, url, ip, tenant) {
     if (!isBinary) {
       const text = data.toString();
       if (text === '{"t":"kf"}' && a.gop.length) { replayGop(a, viewer); return; } // decoder reset: serve from cache
-      if (text.startsWith('{"t":"rtc"') || text.startsWith('{"t":"f')) {
+      // Messages the agent answers per viewer (WebRTC, files, Pi terminal / tools): tag the sender.
+      if (text.startsWith('{"t":"rtc"') || text.startsWith('{"t":"f') || text.startsWith('{"t":"sh-') || text.startsWith('{"t":"pi-')) {
         let m;
         try { m = JSON.parse(text); } catch { return; }
         m.vid = viewer.vid;

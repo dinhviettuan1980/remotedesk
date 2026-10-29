@@ -52,7 +52,7 @@ const prefs = (() => {
 })();
 
 function show(name) {
-  for (const s of ['login', 'devices', 'admin', 'session']) $(s).hidden = s !== name;
+  for (const s of ['login', 'devices', 'admin', 'session', 'pi']) $(s).hidden = s !== name;
 }
 
 // ---------------------------------------------------------------- login
@@ -99,23 +99,43 @@ async function refreshDevices() {
     if (r.status === 401) { clearInterval(devicesTimer); show('login'); return; }
     list = await r.json();
   } catch { return; }
+  // Tabs: computers (screen sharing) and Raspberry Pis (linux agents, pi.js).
+  const isPi = (a) => a.os === 'linux';
+  const tab = devTab();
+  const pis = list.filter(isPi).length;
+  $('dev-tabs').querySelector('[data-tab="pc"] .count').textContent = list.length - pis ? `(${list.length - pis})` : '';
+  $('dev-tabs').querySelector('[data-tab="pi"] .count').textContent = pis ? `(${pis})` : '';
+  list = list.filter((a) => isPi(a) === (tab === 'pi'));
   const ul = $('device-list');
   ul.replaceChildren(...list.map((a) => {
     const li = document.createElement('li');
     li.className = 'device';
     li.innerHTML = `<span class="os"></span><span class="meta"><div class="title"></div><div class="sub"></div></span><span class="dot"></span>`;
-    li.querySelector('.os').textContent = a.os === 'darwin' ? '' : a.os === 'windows' ? '⊞' : '🖥';
+    li.querySelector('.os').textContent = a.os === 'darwin' ? '' : a.os === 'windows' ? '⊞' : isPi(a) ? '🍓' : '🖥';
     li.querySelector('.title').textContent = a.name;
-    li.querySelector('.sub').textContent = `${a.os === 'darwin' ? 'macOS' : a.os === 'windows' ? 'Windows' : a.os} · agent ${a.ver}${a.latest ? ` · có bản ${a.latest}` : ''}${a.watching ? ` · ${a.watching} người đang xem` : ''}`;
+    const osName = a.os === 'darwin' ? 'macOS' : a.os === 'windows' ? 'Windows' : isPi(a) ? 'Pi' : a.os;
+    li.querySelector('.sub').textContent = `${osName} · agent ${a.ver}${a.latest ? ` · có bản ${a.latest}` : ''}${a.watching ? ` · ${a.watching} người đang ${isPi(a) ? 'mở' : 'xem'}` : ''}`;
     li.querySelector('.dot').classList.toggle('busy', a.busy);
-    li.onclick = () => { location.hash = `#/d/${encodeURIComponent(a.id)}`; };
+    li.onclick = () => { location.hash = `#/${isPi(a) ? 'pi' : 'd'}/${encodeURIComponent(a.id)}`; };
     if (!a.latest) updating.delete(a.id);
     if (a.canUpdate) li.querySelector('.meta').after(updateButton(a));
     return li;
   }));
-  $('device-empty').hidden = list.length > 0;
-  if (!list.length) $('install').open = true;
+  $('device-empty').hidden = tab === 'pi' || list.length > 0;
+  $('pi-empty').hidden = tab !== 'pi' || list.length > 0;
+  $('install').hidden = tab === 'pi';
+  $('pi-add').hidden = tab !== 'pi';
+  if (!list.length) $(tab === 'pi' ? 'pi-add' : 'install').open = true;
 }
+
+const devTab = () => prefs.get('devtab', 'pc');
+for (const b of $('dev-tabs').querySelectorAll('button')) {
+  b.onclick = () => { prefs.set('devtab', b.dataset.tab); renderDevTabs(); refreshDevices(); };
+}
+function renderDevTabs() {
+  for (const b of $('dev-tabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.tab === devTab());
+}
+renderDevTabs();
 
 // "Cập nhật" next to an outdated machine: the agent downloads the current
 // installer and restarts (Windows 0.2.1+, macOS 0.2.3+), no session needed.
@@ -168,6 +188,8 @@ async function loadInstall() {
     $('cmd-win-agent').textContent = i.agent.windowsPs;
     $('cmd-mac-full').textContent = i.full.mac;
     $('cmd-mac-agent').textContent = i.agent.mac;
+    $('cmd-pi').textContent = i.pi;
+    $('cmd-pi-ask').textContent = `curl -fsSL "${location.origin}/install-pi.sh" | sudo bash`;
   } catch { /* offline */ }
 }
 
@@ -2151,7 +2173,10 @@ $('user-form').addEventListener('submit', async (e) => {
 // ---------------------------------------------------------------- routing
 
 async function route() {
+  const pi = location.hash.match(/^#\/pi\/(.+)$/);
+  if (!pi) stopPi(); // pi.js
   if (location.hash === '#/admin') { stopSession(); showAdmin(); return; }
+  if (pi) { stopSession(); clearInterval(devicesTimer); startPi(decodeURIComponent(pi[1])); return; }
   const m = location.hash.match(/^#\/d\/(.+)$/);
   if (!m) { stopSession(); showDevices(); return; }
   const r = await fetch('/api/agents', { cache: 'no-store' }).catch(() => null);
@@ -2159,4 +2184,5 @@ async function route() {
   startSession(decodeURIComponent(m[1]));
 }
 window.addEventListener('hashchange', route);
-route();
+// After every script (files.js, pi.js) has loaded: route() may call into them.
+document.addEventListener('DOMContentLoaded', route);

@@ -96,4 +96,11 @@ echo "▸ installer: macOS (.pkg, token-free: read from the download link)"
 echo "▸ viewer app: macOS"
 ../viewer-mac/build.sh "$OUT" >/dev/null
 
+echo "▸ Pi agent: linux arm64 / armv6 / amd64 (install/install-pi.sh)"
+(cd ../pi-agent && go test ./... >/dev/null \
+  && sed -n 's/^const version = "\(.*\)"/\1/p' main.go > "$OUT/pi-agent-version.txt" \
+  && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$OUT/pi-agent-linux-arm64" . \
+  && GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$OUT/pi-agent-linux-armv6" . \
+  && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$OUT/pi-agent-linux-amd64" .)
+
 ls -la "$OUT"

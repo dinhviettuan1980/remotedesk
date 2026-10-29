@@ -10,6 +10,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <meta name="theme-color" content="#171a1f">
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="vendor/xterm.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -43,8 +44,22 @@
         <a class="muted small" href="/logout">Đăng xuất</a>
       </span>
     </header>
+    <!-- Computers (screen sharing) and Raspberry Pis (terminal, services, hardware). -->
+    <nav id="dev-tabs" class="dev-tabs">
+      <button data-tab="pc">🖥 Máy tính <span class="count"></span></button>
+      <button data-tab="pi">🍓 Pi <span class="count"></span></button>
+    </nav>
     <ul id="device-list" class="devices"></ul>
     <p id="device-empty" class="muted center" hidden>Chưa có máy nào online. Cài agent lên máy cần điều khiển.</p>
+    <p id="pi-empty" class="muted center" hidden>Chưa có Pi nào online. Thêm Pi bằng lệnh bên dưới.</p>
+    <details id="pi-add" class="install" hidden>
+      <summary>Thêm Pi</summary>
+      <p class="muted small">Chạy một lần trên Pi (qua SSH hoặc bàn phím cắm vào Pi). Pi tự kết nối ra máy chủ, nên sau đó quản lý được từ bất cứ đâu, không cần IP public hay chung mạng. Chạy lại lệnh để cập nhật; cấu hình ở <code>/etc/remotedesk-pi/config.json</code>.</p>
+      <div class="cmd"><code id="cmd-pi"></code><button data-copy="cmd-pi">Copy</button></div>
+      <p class="muted small">Lệnh trên có chứa mã truy cập của bạn. Lệnh không kèm mã (Pi sẽ hỏi mã khi cài):</p>
+      <div class="cmd"><code id="cmd-pi-ask"></code><button data-copy="cmd-pi-ask">Copy</button></div>
+      <p class="muted small">Hỗ trợ Pi 3/4/5, Zero 2 (64-bit) và Pi Zero / Pi 1 (32-bit).</p>
+    </details>
     <details id="audit" class="install">
       <summary>Lịch sử truy cập</summary>
       <p class="muted small">Các phiên xem / điều khiển máy của bạn đã kết thúc, mới nhất trước.</p>
@@ -90,6 +105,58 @@
     </details>
     <p id="install-hint" class="muted small center" hidden></p>
     <p id="unsupported" class="error center" hidden>Trình duyệt này không hỗ trợ WebCodecs. Hãy dùng Chrome, Edge hoặc Safari mới.</p>
+  </section>
+
+  <!-- Raspberry Pi (pi.js): overview, services, attached hardware, terminal. -->
+  <section id="pi" class="screen" hidden>
+    <header class="pi-bar">
+      <button id="pi-back" title="Về danh sách">✕</button>
+      <span class="pi-title"><b id="pi-name"></b><span id="pi-state" class="muted small"></span></span>
+      <span class="spacer"></span>
+      <button id="pi-update" hidden>Cập nhật agent</button>
+      <button id="pi-reboot" title="Khởi động lại Pi">⟳<span class="lbl"> Khởi động lại</span></button>
+    </header>
+    <nav id="pi-tabs" class="pi-tabs">
+      <button data-tab="info">Tổng quan</button>
+      <button data-tab="svc">Dịch vụ</button>
+      <button data-tab="hw">Thiết bị</button>
+      <button data-tab="term">Terminal</button>
+    </nav>
+    <p id="pi-notice" class="pi-notice" hidden></p>
+    <div id="pi-info" class="pi-pane"><dl id="pi-facts" class="pi-facts"></dl></div>
+    <div id="pi-svc" class="pi-pane" hidden>
+      <div class="pi-svc-tools">
+        <input id="pi-svc-filter" type="search" placeholder="Lọc dịch vụ…" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <label class="chk"><input id="pi-svc-all" type="checkbox"> Hiện tất cả</label>
+        <button id="pi-svc-refresh" title="Tải lại">⟳</button>
+      </div>
+      <ul id="pi-svc-list" class="pi-svc-list"></ul>
+      <div id="pi-out" class="pi-out" hidden>
+        <div class="pi-out-head"><b id="pi-out-title"></b><button id="pi-out-close" title="Đóng">✕</button></div>
+        <pre id="pi-out-text"></pre>
+      </div>
+    </div>
+    <div id="pi-hw" class="pi-pane" hidden>
+      <div class="pi-svc-tools"><span class="muted small">Phần cứng đang cắm vào Pi và kết nối mạng.</span><span class="spacer"></span><button id="pi-hw-refresh" title="Tải lại">⟳</button></div>
+      <div id="pi-hw-list"></div>
+    </div>
+    <div id="pi-term" class="pi-pane pi-term" hidden>
+      <div id="pi-xterm" class="pi-xterm"></div>
+      <div id="pi-keys" class="pi-keys">
+        <button data-seq="\u001b">Esc</button>
+        <button data-seq="\t">Tab</button>
+        <button data-ctrl="1">Ctrl</button>
+        <button data-seq="\u0003">^C</button>
+        <button data-seq="\u001b[A">↑</button>
+        <button data-seq="\u001b[B">↓</button>
+        <button data-seq="\u001b[D">←</button>
+        <button data-seq="\u001b[C">→</button>
+        <button data-seq="|">|</button>
+        <button data-seq="/">/</button>
+        <button data-seq="-">-</button>
+        <button id="pi-term-new" title="Mở terminal mới">↻</button>
+      </div>
+    </div>
   </section>
 
   <!-- Admin only: one access code per person; each code sees only its own machines. -->
@@ -245,7 +312,10 @@
     </aside>
   </section>
 
+  <script src="vendor/xterm.js"></script>
+  <script src="vendor/addon-fit.js"></script>
   <script src="app.js"></script>
   <script src="files.js"></script>
+  <script src="pi.js"></script>
 </body>
 </html>
