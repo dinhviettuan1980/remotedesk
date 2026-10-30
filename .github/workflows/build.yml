@@ -132,7 +132,9 @@ jobs:
         run: |
           R="ssh -i ~/.ssh/id_deploy"
           rsync -az -e "$R" relay/public/ "$DEPLOY_HOST:$DIR/public/"
-          rsync -az --delete -e "$R" relay/dist/ "$DEPLOY_HOST:$DIR/dist/"
+          # The Android APK is built where its release key lives (scripts/build.sh):
+          # leave the copy on the VPS alone.
+          rsync -az --delete --exclude RemoteDesk-Android.apk --exclude android-agent-version.txt -e "$R" relay/dist/ "$DEPLOY_HOST:$DIR/dist/"
       - name: Check
         run: |
           sleep 2
