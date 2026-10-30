@@ -81,12 +81,24 @@ Pi chạy agent riêng ([pi-agent/](pi-agent/), Go, không cgo), tự kết nố
 
 Cài: tab Pi → **Thêm Pi**, chạy lệnh trên Pi (một lần, qua SSH): `curl -fsSL "https://remote.tuandv.id.vn/install-pi.sh?t=<mã>" | sudo bash`, hoặc bỏ `?t=` để Pi hỏi mã. Hỗ trợ arm64 (Pi 3/4/5, Zero 2), armv6 (Pi Zero / 1, Pi OS 32-bit) và amd64. Agent chạy bằng root (`remotedesk-pi.service`, `Restart=always`); cấu hình `/etc/remotedesk-pi/config.json` (0600). Id cố định lúc cài (hostname + 6 ký tự machine-id) nên đổi hostname không thành máy mới; agent không mở cổng nào trên Pi. Log: `journalctl -u remotedesk-pi -f`. Phiên mở trang Pi được ghi vào lịch sử truy cập và Pi offline thì có cảnh báo Telegram như các máy khác.
 
+### Điện thoại Android (tab 📱 Điện thoại)
+
+App RemoteDesk cho Android ([android-agent/](android-agent/), Kotlin, Android 8+) là một agent như máy tính: tự kết nối **ra** relay (`os=android`), nên điện thoại sau NAT / 4G vẫn điều khiển được từ trình duyệt, iPhone hay app Mac / Windows.
+
+- **Màn hình**: MediaProjection → H.264 bằng bộ nén phần cứng (MediaCodec), cùng khung `[1][flags][ts][Annex B]` như agent máy tính, nên viewer giải mã như thường. Chỉ chụp khi có người xem; tối đa 720p dọc, 15 fps. Chỉ qua relay (không P2P: app trả `rtc` kèm `err`).
+- **Điều khiển**: dịch vụ Trợ năng ([InputService.kt](android-agent/app/src/main/java/vn/tuandv/remotedesk/android/InputService.kt)). `md`→`mm`→`mu` thành một cử chỉ (chạm / giữ / vuốt / giữ rồi kéo), cuộn = vuốt ngắn, chuột phải = Back. `txt` ghi vào ô đang focus; Backspace, mũi tên, Ctrl/⌘+A/C/V/X. Viewer: chạm trực tiếp, thanh ◁ ○ ▢ 🔔 ☀ 📷 (IP Webcam) dưới màn hình (`{"t":"nav"}`, `{"t":"launch","pkg"}`).
+- **Tự hồi phục**: chạy lại sau khi khởi động máy / cập nhật (`BOOT_COMPLETED`, `MY_PACKAGE_REPLACED`). Quyền chụp màn hình: Android 8–9 có ô "Không hiển thị lại"; máy khác thì dịch vụ Trợ năng tự bấm "Bắt đầu ngay" trên hộp thoại của chính app. Giữ CPU / Wi‑Fi thức (máy cắm sạc 24/7). Khoá màn hình phải là Vuốt / Không.
+- **Cập nhật**: nút Cập nhật trên danh sách máy → app tải `dist/RemoteDesk-Android.apk`, cài qua PackageInstaller (Trợ năng bấm "Cài đặt"). Cần bật "Cài ứng dụng không rõ nguồn" cho RemoteDesk một lần (bước 4 trong app).
+- **Loa BirdMonitor** (tuỳ chọn trong app): thay trang `/speaker` trên Chrome, đúng giao thức của nó: `wss://birdmonitor.tuandv.id.vn/ws?role=speaker`, nhận `play` / `stop`, tải trọn file rồi phát (loa ngoài, `USAGE_MEDIA`, không đụng micro), trả `hello` / `started` / `ended` / `error`, `battery` lúc kết nối và mỗi 60 giây.
+
+Cài: tab Điện thoại → **Thêm điện thoại Android** → mở link APK bằng trình duyệt của điện thoại → cài → nhập mã truy cập → 4 bước cấp quyền trong app. APK không chứa mã nên tải công khai được. Build: `scripts/build.sh` (cần Android SDK + JDK 17); khoá ký ở `~/.android/remotedesk-release.{jks,properties}`, **ngoài repo, phải giữ lại**: APK ký bằng khoá khác thì điện thoại không cài đè được. CI không có khoá nên bỏ qua APK và không ghi đè APK trên VPS.
+
 **Cập nhật agent**: trang danh sách máy hiện "có bản mới" và nút **Cập nhật** cạnh máy chạy bản cũ (Windows 0.2.1+, Mac 0.2.3+), không cần vào phiên. Trong phiên: "Phím…" → "Cập nhật agent". Từ 0.3.3 agent **tự cập nhật**: 10 phút sau khi chạy rồi cứ 6 giờ một lần, nếu `dist/agent-version.txt` trên relay mới hơn và không có ai đang xem thì tự cài. Mỗi bản chỉ thử một lần (`autoUpdateTried` trong `config.json`); `"autoUpdate": false` để tắt. **Lịch sử truy cập**: mục cuối trang danh sách máy (ai xem máy nào, lúc nào, bao lâu, từ thiết bị / IP nào).
 
 ## Phát triển & deploy
 
 ```bash
-./scripts/build.sh                 # test + build agent (Windows exe, macOS universal, Pi linux) → relay/dist
+./scripts/build.sh                 # test + build agent (Windows exe, macOS universal, Pi linux, Android APK) → relay/dist
 SSHPASS=… ./scripts/deploy.sh      # build + rsync relay + restart systemd
 SSHPASS=… ./scripts/deploy.sh --setup   # lần đầu: token, nginx, certbot
 ```

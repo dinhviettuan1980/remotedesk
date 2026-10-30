@@ -247,10 +247,12 @@ function cmpVer(a, b) {
 }
 
 // The agent version in dist/ (scripts/build.sh writes agent-version.txt, and
-// pi-agent-version.txt for the Raspberry Pi agent, which has its own numbers).
+// pi-agent-version.txt / android-agent-version.txt for the Raspberry Pi agent
+// and the Android app, which have their own numbers).
+const VERSION_FILES = { linux: 'pi-agent-version.txt', android: 'android-agent-version.txt' };
 const latestCache = new Map(); // file → { at, ver }
 function latestAgent(os = '') {
-  const file = os === 'linux' ? 'pi-agent-version.txt' : 'agent-version.txt';
+  const file = VERSION_FILES[os] || 'agent-version.txt';
   const c = latestCache.get(file);
   if (c && Date.now() - c.at < 30_000) return c.ver;
   let ver = '';
@@ -259,11 +261,12 @@ function latestAgent(os = '') {
   return ver;
 }
 
-// Agents that understand {"t":"update"}: Windows 0.2.1+, macOS 0.2.3+, every Pi agent.
+// Agents that understand {"t":"update"}: Windows 0.2.1+, macOS 0.2.3+, every Pi
+// agent and Android app (it installs the APK; Android asks to confirm).
 function canSelfUpdate(a) {
   if (a.os === 'windows') return cmpVer(a.ver, '0.2.1') >= 0;
   if (a.os === 'darwin') return cmpVer(a.ver, '0.2.3') >= 0;
-  return a.os === 'linux';
+  return a.os === 'linux' || a.os === 'android';
 }
 
 function agentSummary(a) {
@@ -349,6 +352,7 @@ function installLinks(base, t) {
   const sh = (app) => `curl -fsSL "${base}/install.sh?t=${tk}${app ? '' : '&app=0'}" | bash`;
   return {
     pi: `curl -fsSL "${base}/install-pi.sh?t=${tk}" | sudo bash`,
+    android: `${base}/dl/RemoteDesk-Android.apk`,
     full: {
       windowsExe: `${base}/dl/RemoteDesk-Setup.exe?t=${tk}`,
       macPkg: `${base}/dl/RemoteDesk-Installer.pkg?t=${tk}`,
@@ -381,7 +385,8 @@ function setupExe(req, token, app) {
 
 // Installers anyone may download (they hold no access code; the code typed
 // during setup decides which group of machines this one joins).
-const PUBLIC_DL = new Set([...Object.keys(SETUP_EXES), '/dl/RemoteDesk-Installer.pkg', '/dl/RemoteDesk-Agent-Installer.pkg', '/install-pi.sh']);
+// The Android APK holds no token either: the app asks for the access code.
+const PUBLIC_DL = new Set([...Object.keys(SETUP_EXES), '/dl/RemoteDesk-Installer.pkg', '/dl/RemoteDesk-Agent-Installer.pkg', '/install-pi.sh', '/dl/RemoteDesk-Android.apk']);
 
 const SETUP_CMDS = {
   '/dl/RemoteDesk-Setup.cmd': true, // agent + app
@@ -551,7 +556,8 @@ const server = http.createServer(async (req, res) => {
     return fs.stat(file, (err, st) => {
       if (err || !st.isFile()) return send(res, 404, 'not found');
       res.writeHead(200, {
-        'Content-Type': 'application/octet-stream',
+        // Android's browser only offers to install an APK served as one.
+        'Content-Type': name.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'application/octet-stream',
         'Content-Length': st.size,
         'Content-Disposition': `attachment; filename="${name}"`,
       });

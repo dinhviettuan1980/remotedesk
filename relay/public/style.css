@@ -63,6 +63,19 @@ button[type=submit] { background: var(--accent); border-color: var(--accent); co
 .fs-hint { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); z-index: 15; max-width: calc(100% - 32px);
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; font-size: 14px;
   text-align: center; white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,.5); pointer-events: none; }
+/* Android phones: ◁ ○ ▢ and shortcuts under the picture. */
+.android-nav { display: flex; justify-content: center; gap: 6px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  background: var(--panel); border-top: 1px solid var(--line); flex-wrap: wrap; }
+.android-nav[hidden] { display: none; }
+.android-nav button { min-width: 48px; padding: 6px 12px; font-size: 18px; line-height: 1; }
+.android-nav button[data-pkg] { font-size: 14px; }
+@media (max-width: 600px) {
+  .android-nav { flex-wrap: nowrap; gap: 4px; }
+  .android-nav button { flex: 1; min-width: 0; padding: 8px 0; }
+  .android-nav button[data-pkg] { font-size: 18px; }
+  .android-nav .lbl { display: none; }
+  .dev-tabs button { padding: 8px 4px; font-size: 14px; white-space: nowrap; }
+}
 .stage-wrap { flex: 1; min-height: 0; position: relative; display: flex; }
 .stage { flex: 1; min-width: 0; min-height: 0; position: relative; overflow: hidden; outline: none; display: flex; touch-action: none; }
 .stage.zoomed { overflow: auto; }

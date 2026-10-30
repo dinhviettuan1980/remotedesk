@@ -103,4 +103,30 @@ echo "▸ Pi agent: linux arm64 / armv6 / amd64 (install/install-pi.sh)"
   && GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$OUT/pi-agent-linux-armv6" . \
   && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$OUT/pi-agent-linux-amd64" .)
 
+# Android app: needs the Android SDK (ANDROID_HOME or ~/Library/Android/sdk) and
+# JDK 17. Signed with ~/.android/remotedesk-release.jks (created on first build,
+# outside the repo): later APKs must use the same key to install over it.
+SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+JDK17="${JAVA17_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || true)}"
+PROPS="$HOME/.android/remotedesk-release.properties"
+if [ -n "${CI:-}" ] && [ ! -f "$PROPS" ]; then
+  # A fresh key here would sign an APK that phones refuse as an update.
+  echo "  (CI without the Android release key — skipping the Android app)"
+elif [ -d "$SDK" ] && [ -n "$JDK17" ]; then
+  echo "▸ Android app (RemoteDesk-Android.apk)"
+  if [ ! -f "$PROPS" ]; then
+    PW=$(openssl rand -hex 16)
+    "$JDK17/bin/keytool" -genkeypair -keystore "$HOME/.android/remotedesk-release.jks" -storepass "$PW" -keypass "$PW" \
+      -alias remotedesk -keyalg RSA -keysize 3072 -validity 36500 -dname "CN=RemoteDesk Android" >/dev/null 2>&1
+    (umask 077; printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=remotedesk\nkeyPassword=%s\n' \
+      "$HOME/.android/remotedesk-release.jks" "$PW" "$PW" > "$PROPS")
+  fi
+  (cd ../android-agent && printf 'sdk.dir=%s\n' "$SDK" > local.properties \
+    && JAVA_HOME="$JDK17" ./gradlew -q --console=plain assembleRelease \
+    && cp app/build/outputs/apk/release/app-release.apk "$OUT/RemoteDesk-Android.apk" \
+    && sed -n 's/^ *versionName = "\(.*\)"/\1/p' app/build.gradle.kts > "$OUT/android-agent-version.txt")
+else
+  echo "  (Android SDK or JDK 17 not found — skipping the Android app)"
+fi
+
 ls -la "$OUT"

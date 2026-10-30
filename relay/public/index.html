@@ -44,14 +44,29 @@
         <a class="muted small" href="/logout">Đăng xuất</a>
       </span>
     </header>
-    <!-- Computers (screen sharing) and Raspberry Pis (terminal, services, hardware). -->
+    <!-- Computers and Android phones (screen sharing), Raspberry Pis (terminal, services, hardware). -->
     <nav id="dev-tabs" class="dev-tabs">
       <button data-tab="pc">🖥 Máy tính <span class="count"></span></button>
+      <button data-tab="phone">📱 Điện thoại <span class="count"></span></button>
       <button data-tab="pi">🍓 Pi <span class="count"></span></button>
     </nav>
     <ul id="device-list" class="devices"></ul>
     <p id="device-empty" class="muted center" hidden>Chưa có máy nào online. Cài agent lên máy cần điều khiển.</p>
     <p id="pi-empty" class="muted center" hidden>Chưa có Pi nào online. Thêm Pi bằng lệnh bên dưới.</p>
+    <p id="phone-empty" class="muted center" hidden>Chưa có điện thoại nào online. Cài app RemoteDesk cho Android theo hướng dẫn bên dưới.</p>
+    <details id="phone-add" class="install" hidden>
+      <summary>Thêm điện thoại Android</summary>
+      <p class="muted small">Làm một lần trên chính điện thoại cần điều khiển (Android 8 trở lên). Điện thoại tự kết nối ra máy chủ, nên sau đó điều khiển được từ bất cứ đâu.</p>
+      <a id="dl-android" class="btn" href="/dl/RemoteDesk-Android.apk">Tải app RemoteDesk (APK)</a>
+      <ol class="steps small muted">
+        <li>Mở link trên <b>bằng trình duyệt của điện thoại</b> → tải về → mở file. Nếu Android hỏi, cho phép trình duyệt <b>cài ứng dụng không rõ nguồn</b>.</li>
+        <li>Mở app RemoteDesk → nhập <b>mã truy cập</b> (giống khi cài cho máy tính) → <b>Lưu và kết nối</b>.</li>
+        <li><b>Cho phép chụp màn hình</b>: tích “Không hiển thị lại” → <b>Bắt đầu ngay</b>.</li>
+        <li><b>Bật Trợ năng → RemoteDesk</b> (để chạm, vuốt, gõ chữ từ xa) và <b>Cho chạy nền liên tục</b>.</li>
+        <li>Khoá màn hình để <b>Vuốt</b> hoặc <b>Không</b>: có mã PIN thì từ xa không mở khoá được.</li>
+      </ol>
+      <p class="muted small">App tự chạy lại khi điện thoại khởi động lại. Có thể bật luôn <b>Loa BirdMonitor</b> trong app để thay trang Loa trên Chrome.</p>
+    </details>
     <details id="pi-add" class="install" hidden>
       <summary>Thêm Pi</summary>
       <p class="muted small">Chạy một lần trên Pi (qua SSH hoặc bàn phím cắm vào Pi). Pi tự kết nối ra máy chủ, nên sau đó quản lý được từ bất cứ đâu, không cần IP public hay chung mạng. Chạy lại lệnh để cập nhật; cấu hình ở <code>/etc/remotedesk-pi/config.json</code>.</p>
@@ -271,6 +286,15 @@
         <button id="touch-hint-ok">Đã hiểu</button>
       </div>
       <textarea id="vkb" class="vkb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Bàn phím"></textarea>
+    </div>
+    <!-- Android phones: the system buttons and shortcuts (app.js, renderAndroid). -->
+    <div id="android-nav" class="android-nav" hidden>
+      <button data-nav="back" title="Quay lại">◁</button>
+      <button data-nav="home" title="Màn hình chính">○</button>
+      <button data-nav="recents" title="Ứng dụng gần đây">▢</button>
+      <button data-nav="notifications" title="Kéo thanh thông báo">🔔</button>
+      <button data-nav="wake" title="Bật sáng màn hình">☀</button>
+      <button data-pkg="com.pas.webcam" title="Mở IP Webcam">📷<span class="lbl"> IP Webcam</span></button>
     </div>
     <div id="tp-cursor" class="tp-cursor" hidden></div>
     <button id="kb-offer" class="kb-offer" hidden>⌨ Gõ phím</button>

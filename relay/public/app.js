@@ -99,36 +99,41 @@ async function refreshDevices() {
     if (r.status === 401) { clearInterval(devicesTimer); show('login'); return; }
     list = await r.json();
   } catch { return; }
-  // Tabs: computers (screen sharing) and Raspberry Pis (linux agents, pi.js).
+  // Tabs: computers (screen sharing), phones (Android app: screen sharing too)
+  // and Raspberry Pis (linux agents, pi.js).
   const isPi = (a) => a.os === 'linux';
   const tab = devTab();
-  const pis = list.filter(isPi).length;
-  $('dev-tabs').querySelector('[data-tab="pc"] .count').textContent = list.length - pis ? `(${list.length - pis})` : '';
-  $('dev-tabs').querySelector('[data-tab="pi"] .count').textContent = pis ? `(${pis})` : '';
-  list = list.filter((a) => isPi(a) === (tab === 'pi'));
+  for (const k of ['pc', 'phone', 'pi']) {
+    const n = list.filter((a) => devKind(a) === k).length;
+    $('dev-tabs').querySelector(`[data-tab="${k}"] .count`).textContent = n ? `(${n})` : '';
+  }
+  list = list.filter((a) => devKind(a) === tab);
   const ul = $('device-list');
   ul.replaceChildren(...list.map((a) => {
     const li = document.createElement('li');
     li.className = 'device';
     li.innerHTML = `<span class="os"></span><span class="meta"><div class="title"></div><div class="sub"></div></span><span class="dot"></span>`;
-    li.querySelector('.os').textContent = a.os === 'darwin' ? '' : a.os === 'windows' ? '⊞' : isPi(a) ? '🍓' : '🖥';
+    li.querySelector('.os').textContent = a.os === 'darwin' ? '' : a.os === 'windows' ? '⊞' : isPi(a) ? '🍓' : a.os === 'android' ? '📱' : '🖥';
     li.querySelector('.title').textContent = a.name;
-    const osName = a.os === 'darwin' ? 'macOS' : a.os === 'windows' ? 'Windows' : isPi(a) ? 'Pi' : a.os;
-    li.querySelector('.sub').textContent = `${osName} · agent ${a.ver}${a.latest ? ` · có bản ${a.latest}` : ''}${a.watching ? ` · ${a.watching} người đang ${isPi(a) ? 'mở' : 'xem'}` : ''}`;
+    const osName = a.os === 'darwin' ? 'macOS' : a.os === 'windows' ? 'Windows' : isPi(a) ? 'Pi' : a.os === 'android' ? 'Android' : a.os;
+    li.querySelector('.sub').textContent = `${osName} · ${a.os === 'android' ? 'app' : 'agent'} ${a.ver}${a.latest ? ` · có bản ${a.latest}` : ''}${a.watching ? ` · ${a.watching} người đang ${isPi(a) ? 'mở' : 'xem'}` : ''}`;
     li.querySelector('.dot').classList.toggle('busy', a.busy);
     li.onclick = () => { location.hash = `#/${isPi(a) ? 'pi' : 'd'}/${encodeURIComponent(a.id)}`; };
     if (!a.latest) updating.delete(a.id);
     if (a.canUpdate) li.querySelector('.meta').after(updateButton(a));
     return li;
   }));
-  $('device-empty').hidden = tab === 'pi' || list.length > 0;
+  $('device-empty').hidden = tab !== 'pc' || list.length > 0;
   $('pi-empty').hidden = tab !== 'pi' || list.length > 0;
-  $('install').hidden = tab === 'pi';
+  $('phone-empty').hidden = tab !== 'phone' || list.length > 0;
+  $('install').hidden = tab !== 'pc';
   $('pi-add').hidden = tab !== 'pi';
-  if (!list.length) $(tab === 'pi' ? 'pi-add' : 'install').open = true;
+  $('phone-add').hidden = tab !== 'phone';
+  if (!list.length) $({ pc: 'install', pi: 'pi-add', phone: 'phone-add' }[tab]).open = true;
 }
 
-const devTab = () => prefs.get('devtab', 'pc');
+const devKind = (a) => (a.os === 'linux' ? 'pi' : a.os === 'android' ? 'phone' : 'pc');
+const devTab = () => { const t = prefs.get('devtab', 'pc'); return ['pc', 'phone', 'pi'].includes(t) ? t : 'pc'; };
 for (const b of $('dev-tabs').querySelectorAll('button')) {
   b.onclick = () => { prefs.set('devtab', b.dataset.tab); renderDevTabs(); refreshDevices(); };
 }
@@ -189,6 +194,7 @@ async function loadInstall() {
     $('cmd-mac-full').textContent = i.full.mac;
     $('cmd-mac-agent').textContent = i.agent.mac;
     $('cmd-pi').textContent = i.pi;
+    if (i.android) $('dl-android').href = i.android;
     $('cmd-pi-ask').textContent = `curl -fsSL "${location.origin}/install-pi.sh" | sudo bash`;
   } catch { /* offline */ }
 }
@@ -280,6 +286,7 @@ function startSession(id) {
   renderScreens();
   updateAudioButton();
   updateMode();
+  $('android-nav').hidden = true; // until "hello" says what the agent is
   $('sel-quality').value = prefs.get('quality', 'auto');
   $('sess-name').textContent = id;
   setOverlay('Đang kết nối…');
@@ -365,11 +372,13 @@ function onControl(m) {
       const key = `swap:${m.agent.id}`;
       const def = IS_MAC_VIEWER !== (m.agent.os === 'darwin'); // swap by default across OSes
       $('chk-swap').checked = prefs.get(key, def);
-      S.zoom = prefs.get(`zoom:${m.agent.id}`, IS_PHONE ? 'height' : 'fit');
+      // A portrait phone screen fits best whole; a desktop one by height on a phone.
+      S.zoom = prefs.get(`zoom:${m.agent.id}`, IS_PHONE && m.agent.os !== 'android' ? 'height' : 'fit');
       syncZoomSelect();
       fitCanvas();
       $('key-meta').textContent = m.agent.os === 'darwin' ? '⌘' : 'Win';
       setOverlay('Đang chờ hình ảnh…');
+      renderAndroid();
       S.screenSynced = false; // the agent may have restarted on its default display
       if (S.audioOn) sendNow({ t: 'audio', on: true }); // a new relay connection starts silent
       startP2P();
@@ -526,6 +535,7 @@ function p2pWanted() {
 
 async function startP2P() {
   if (!S || S.pc || !p2pWanted() || !S.ws || S.ws.readyState !== WebSocket.OPEN) return;
+  if (isAndroid()) return; // the Android app streams over the relay only
   clearTimeout(S.p2pRetry);
   let ice = S.ice || ICE_SERVERS;
   if (S.noTurn) ice = ice.map((s) => ({ urls: [].concat(s.urls).filter((u) => !/^turns?:/.test(u)) })).filter((s) => s.urls.length);
@@ -1110,7 +1120,9 @@ const IS_PHONE = IS_TOUCH && Math.min(screen.width, screen.height) < 600;
 const tpCursor = $('tp-cursor');
 let touch = null;
 
-const isTrackpad = () => prefs.get('touch', 'trackpad') === 'trackpad';
+// Android phones are driven by touch where you touch, like holding them.
+const isAndroid = () => !!(S && S.agent && S.agent.os === 'android');
+const isTrackpad = () => !isAndroid() && prefs.get('touch', 'trackpad') === 'trackpad';
 const pt = (t) => ({ clientX: t.clientX, clientY: t.clientY });
 
 function sendMoveTo(t) {
@@ -1224,6 +1236,12 @@ stage.addEventListener('touchstart', (e) => {
       if (!touch || touch.mode !== 'pending' || !S || !S.control) return;
       if (navigator.vibrate) navigator.vibrate(15);
       if (isTrackpad()) { touch.mode = 'hold'; return; } // right click on release, drag on move
+      if (isAndroid()) { // finger stays down: the phone sees a long press (then a drag)
+        touch.mode = 'drag';
+        sendMoveTo(touch.start);
+        send({ t: 'md', b: 0 });
+        return;
+      }
       clickAt(touch.start, 2);
       touch.mode = 'done';
     }, 500),
@@ -1312,21 +1330,41 @@ stage.addEventListener('touchcancel', () => {
   touch = null;
 });
 
+// Android phones (the RemoteDesk app): ◁ ○ ▢ and shortcuts under the screen.
+// A button there is a deliberate action, so it also turns control on.
+function renderAndroid() {
+  const on = isAndroid();
+  $('android-nav').hidden = !on;
+  $('sel-touch').hidden = !IS_TOUCH || on;
+  fitCanvas();
+}
+
+for (const b of $('android-nav').querySelectorAll('button')) {
+  b.onclick = () => {
+    if (!S) return;
+    if (!S.control) setControl(true);
+    if (b.dataset.nav) send({ t: 'nav', k: b.dataset.nav });
+    else if (b.dataset.pkg) send({ t: 'launch', pkg: b.dataset.pkg });
+    $('stage').focus();
+  };
+}
+
 // One-time help for the touch gestures (also ⋯ → ❔).
 const HINTS = {
   trackpad: 'Kéo 1 ngón: di chuột\nChạm: click · Chạm 2 lần: double-click\nChạm 2 ngón hoặc giữ: click phải\nGiữ rồi kéo: kéo thả\n2 ngón kéo: cuộn\nChụm / mở 2 ngón: zoom',
   direct: 'Chạm: click tại chỗ chạm\nGiữ: click phải · Kéo: kéo thả\n2 ngón kéo: cuộn\nChụm / mở 2 ngón: zoom\nBấm nút nhỏ dễ hơn với Touchpad (⋯ → ☝).',
+  android: 'Chạm, giữ, vuốt như cầm điện thoại\n2 ngón kéo: cuộn\nChụm / mở 2 ngón: zoom\n◁ ○ ▢ dưới màn hình: Back, Home, ứng dụng gần đây',
 };
 
 function showTouchHint() {
-  const mode = isTrackpad() ? 'trackpad' : 'direct';
+  const mode = isAndroid() ? 'android' : isTrackpad() ? 'trackpad' : 'direct';
   $('touch-hint-body').textContent = HINTS[mode];
   $('touch-hint').hidden = false;
   prefs.set(`hint:${mode}`, true);
 }
 
 function maybeTouchHint() {
-  if (IS_TOUCH && S && S.control && !prefs.get(`hint:${isTrackpad() ? 'trackpad' : 'direct'}`, false)) showTouchHint();
+  if (IS_TOUCH && S && S.control && !prefs.get(`hint:${isAndroid() ? 'android' : isTrackpad() ? 'trackpad' : 'direct'}`, false)) showTouchHint();
 }
 
 $('touch-hint-ok').onclick = () => { $('touch-hint').hidden = true; stage.focus(); };
@@ -1566,7 +1604,7 @@ function mapCode(code) {
 
 // Agent 0.3.1+ types {t:'txt'} as Unicode characters.
 function agentTypesText() {
-  return !!(S && S.agent && verAtLeast(S.agent.ver, '0.3.1'));
+  return !!(S && S.agent && (S.agent.os === 'android' || verAtLeast(S.agent.ver, '0.3.1')));
 }
 
 // Keys injected without a scancode (Unikey/EVKey's Backspaces, Shift+←) arrive
@@ -1653,7 +1691,8 @@ window.addEventListener('keydown', (e) => {
   if (!S || !S.control || keyTargetIsUi(e) || !phys) return;
   // A character the keyboard layout or a typing tool (EVKey/GoTiengViet on a
   // Mac post "à" on keycode 0 = A) put on this key: type it, not the key.
-  if (agentTypesText() && !e.ctrlKey && !e.metaKey && !e.altKey && [...e.key].length === 1 && e.key > '~') {
+  // Android has no key injection: every printable character goes as text there.
+  if (agentTypesText() && !e.ctrlKey && !e.metaKey && !e.altKey && [...e.key].length === 1 && (e.key > '~' || (isAndroid() && e.key >= ' '))) {
     e.preventDefault();
     send({ t: 'txt', text: e.key });
     return;

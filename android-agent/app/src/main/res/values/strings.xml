@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RemoteDesk</string>
+    <string name="input_service_label">RemoteDesk – điều khiển từ xa</string>
+    <string name="input_service_desc">Cho phép RemoteDesk chạm, vuốt, gõ chữ và bấm Back / Home khi bạn điều khiển điện thoại này từ xa. RemoteDesk chỉ thao tác khi có phiên điều khiển của bạn, và tự bấm \"Bắt đầu ngay\" trên hộp thoại xin quyền chụp màn hình của chính nó.</string>
+</resources>
