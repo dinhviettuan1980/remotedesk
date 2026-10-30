@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 func platformInit() {
@@ -41,39 +40,48 @@ func restartSelf() { os.Exit(0) }
 
 func platformEncoders() []string { return []string{"h264_videotoolbox", "libx264"} }
 
-var (
-	screenIdxMu sync.Mutex
-	screenIdx   []string
-)
-
-// avfoundationScreens lists ffmpeg's "Capture screen N" device indices in
-// display order, asking ffmpeg again when the number of displays changed.
-func avfoundationScreens(ff string, displays int) []string {
-	screenIdxMu.Lock()
-	defer screenIdxMu.Unlock()
-	if screenIdx != nil && len(screenIdx) == displays {
-		return screenIdx
-	}
+// avfoundationScreens maps CGGetActiveDisplayList order ("Capture screen N")
+// to ffmpeg's avfoundation device indices. avfoundation indices shift when
+// cameras or virtual displays come and go, so it is re-queried on every
+// (re)start instead of cached: a stale index fails with "Invalid device index".
+func avfoundationScreens(ff string) []string {
 	cmd := exec.Command(ff, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", "")
 	var out bytes.Buffer
 	cmd.Stderr = &out
 	_ = cmd.Run()
 	re := regexp.MustCompile(`\[(\d+)\] Capture screen (\d+)`)
-	screenIdx = []string{}
+	byScreen := map[int]string{}
+	maxN := -1
 	for _, m := range re.FindAllStringSubmatch(out.String(), -1) {
-		screenIdx = append(screenIdx, m[1])
+		n, _ := strconv.Atoi(m[2])
+		byScreen[n] = m[1]
+		if n > maxN {
+			maxN = n
+		}
 	}
-	log.Printf("avfoundation screens: %v", screenIdx)
-	return screenIdx
+	screens := make([]string, maxN+1)
+	for n, idx := range byScreen {
+		screens[n] = idx
+	}
+	log.Printf("avfoundation screens: %v", screens)
+	return screens
 }
 
 func platformPipelines(ff string, cfg *Config, encoders []string, sp StreamParams) []pipeline {
-	screens := avfoundationScreens(ff, len(listDisplays()))
-	dev := "1"
-	if i := sp.disp.capIdx; i >= 0 && i < len(screens) {
+	screens := avfoundationScreens(ff)
+	dev := ""
+	if i := sp.disp.capIdx; i >= 0 && i < len(screens) && screens[i] != "" {
 		dev = screens[i]
-	} else if len(screens) > 0 {
-		dev = screens[0]
+	} else {
+		for _, d := range screens {
+			if d != "" {
+				dev = d
+				break
+			}
+		}
+	}
+	if dev == "" {
+		return nil // no "Capture screen" device: surface a clear error instead of guessing an index
 	}
 	var out []pipeline
 	for _, pix := range []string{"nv12", ""} {
