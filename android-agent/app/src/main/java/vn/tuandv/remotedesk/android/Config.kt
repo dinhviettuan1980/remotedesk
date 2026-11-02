@@ -29,6 +29,10 @@ class Config(ctx: Context) {
     var speakerUrl: String
         get() = p.getString("speakerUrl", DEFAULT_SPEAKER_URL)!!
         set(v) = p.edit().putString("speakerUrl", v.trim()).apply()
+    /** BirdMonitor camera + microphone (replaces IP Webcam), same server and token. */
+    var cameraOn: Boolean
+        get() = p.getBoolean("cameraOn", false)
+        set(v) = p.edit().putBoolean("cameraOn", v).apply()
     var speakerToken: String
         get() = p.getString("speakerToken", "")!!
         set(v) = p.edit().putString("speakerToken", v.trim()).apply()

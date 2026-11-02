@@ -37,6 +37,7 @@ class AgentService : Service() {
     lateinit var handler: Handler; private set
     private lateinit var relay: RelayClient
     private var speaker: SpeakerClient? = null
+    private var camera: CameraClient? = null
 
     private var projection: MediaProjection? = null
     private var askedAt = 0L
@@ -99,6 +100,7 @@ class AgentService : Service() {
             stopStream()
             relay.stop()
             speaker?.stop()
+            camera?.stop()
             projection?.stop()
         }
         thread.quitSafely()
@@ -116,6 +118,13 @@ class AgentService : Service() {
         } else {
             speaker?.stop()
             speaker = null
+        }
+        if (cfg.cameraOn) {
+            if (camera == null) camera = CameraClient(this, cfg).also { it.start() }
+            else camera!!.restartIfChanged()
+        } else {
+            camera?.stop()
+            camera = null
         }
         // Ask for screen capture now, while nobody waits on it.
         if (projection == null && cfg.ready) askProjection()
@@ -376,7 +385,7 @@ class AgentService : Service() {
         }
     }
 
-    private fun releaseScreen() {
+    fun releaseScreen() {
         screenLock?.takeIf { it.isHeld }?.release()
     }
 
@@ -399,11 +408,12 @@ class AgentService : Service() {
         input = InputService.instance != null,
         viewing = viewing,
         speaker = speaker?.state,
+        camera = camera?.state,
     )
 
     data class Status(
         val relay: String, val relayUp: Boolean, val capture: Boolean, val input: Boolean,
-        val viewing: Boolean, val speaker: String?,
+        val viewing: Boolean, val speaker: String?, val camera: String?,
     )
 
     private fun createChannel() {
@@ -430,6 +440,7 @@ class AgentService : Service() {
             if (!s.capture) append(" · chưa có quyền chụp màn hình")
             if (!s.input) append(" · chưa bật Trợ năng")
             s.speaker?.let { append(" · Loa: $it") }
+            s.camera?.let { append(" · Camera: $it") }
         }
         if (text + viewing == lastNotif) return
         lastNotif = text + viewing

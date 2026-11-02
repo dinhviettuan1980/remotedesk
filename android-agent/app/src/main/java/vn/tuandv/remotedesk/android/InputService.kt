@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.WindowManager
@@ -274,6 +275,10 @@ class InputService : AccessibilityService() {
     }
 
     private fun clipboard() = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+
+    /** Screen off (BirdMonitor night schedule). Android 9+; older phones time out by themselves. */
+    fun lockScreen(): Boolean =
+        Build.VERSION.SDK_INT >= 28 && performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
 
     private fun nav(k: String) {
         when (k) {

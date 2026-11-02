@@ -1,7 +1,9 @@
 package vn.tuandv.remotedesk.android
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
@@ -61,9 +63,14 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
 
+        label("BirdMonitor (lồng vẹt)", true)
         val speakerOn = CheckBox(this).apply {
-            text = "Loa BirdMonitor (thay trang Loa trên Chrome)"
+            text = "Loa (thay trang Loa trên Chrome)"
             isChecked = cfg.speakerOn
+        }.also { col.addView(it) }
+        val cameraOn = CheckBox(this).apply {
+            text = "Camera + micro (thay IP Webcam, không cần Tailscale/ADB)"
+            isChecked = cfg.cameraOn
         }.also { col.addView(it) }
         val speakerBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }.also { col.addView(it) }
         val speakerUrl = EditText(this).apply {
@@ -76,14 +83,22 @@ class MainActivity : Activity() {
         }
         speakerBox.addView(speakerUrl)
         speakerBox.addView(speakerToken)
-        speakerBox.visibility = if (speakerOn.isChecked) View.VISIBLE else View.GONE
-        speakerOn.setOnCheckedChangeListener { _, on -> speakerBox.visibility = if (on) View.VISIBLE else View.GONE }
+        fun showBird() {
+            speakerBox.visibility = if (speakerOn.isChecked || cameraOn.isChecked) View.VISIBLE else View.GONE
+        }
+        showBird()
+        speakerOn.setOnCheckedChangeListener { _, _ -> showBird() }
+        cameraOn.setOnCheckedChangeListener { _, on ->
+            showBird()
+            if (on) askCameraMic()
+        }
 
         button("Lưu và kết nối") {
             cfg.server = server.text.toString().ifBlank { DEFAULT_SERVER }
             cfg.token = token.text.toString()
             cfg.name = name.text.toString()
             cfg.speakerOn = speakerOn.isChecked
+            cfg.cameraOn = cameraOn.isChecked
             cfg.speakerUrl = speakerUrl.text.toString().ifBlank { DEFAULT_SPEAKER_URL }
             cfg.speakerToken = speakerToken.text.toString()
             AgentService.start(this, reload = true)
@@ -108,10 +123,29 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
         }
         label("Bật \"Cho phép từ nguồn này\": nút Cập nhật trên trang web sẽ cài được bản mới mà không cần cầm máy.")
+        button("5. Cho phép Camera và Micro (BirdMonitor)") { askCameraMic() }
+        label("Chỉ cần khi bật \"Camera + micro\". Tắt hẳn IP Webcam để app dùng được camera.")
         label("Phiên bản ${BuildConfig.VERSION_NAME} · mã máy ${cfg.id}")
 
         setContentView(ScrollView(this).apply { addView(col) })
         if (cfg.ready) AgentService.start(this)
+    }
+
+    private fun camMicGranted() = PERMS.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+
+    private fun askCameraMic() {
+        if (!camMicGranted()) requestPermissions(PERMS, 1)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // The camera client retries on its own; make it pick the grant up now.
+        if (camMicGranted() && cfg.cameraOn) AgentService.start(this, reload = true)
+        refresh()
+    }
+
+    companion object {
+        private val PERMS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
     }
 
     override fun onResume() {
@@ -143,7 +177,9 @@ class MainActivity : Activity() {
             append("${ok(s.input)} Trợ năng (điều khiển)\n")
             append("${ok(pm.isIgnoringBatteryOptimizations(packageName))} Chạy nền liên tục\n")
             append("${ok(packageManager.canRequestPackageInstalls())} Tự cập nhật\n")
+            if (cfg.cameraOn) append("${ok(camMicGranted())} Quyền Camera + Micro\n")
             s.speaker?.let { append("• Loa BirdMonitor: $it\n") }
+            s.camera?.let { append("• Camera BirdMonitor: $it\n") }
             if (s.viewing) append("• Đang có người xem / điều khiển\n")
         }
     }

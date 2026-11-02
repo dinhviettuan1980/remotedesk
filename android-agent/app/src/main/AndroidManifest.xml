@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- BirdMonitor camera + microphone (replaces IP Webcam). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <!-- Shortcut buttons in the viewer open other apps (IP Webcam, Chrome…). -->
     <queries>
@@ -49,7 +53,7 @@
         <service
             android:name=".AgentService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|camera|microphone" />
 
         <service
             android:name=".InputService"
