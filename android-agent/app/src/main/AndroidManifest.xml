@@ -50,6 +50,15 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- Full screen for the bird: nature videos, lesson pictures, video calls. -->
+        <activity
+            android:name=".ScreenActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="vn.tuandv.remotedesk.screen"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
         <service
             android:name=".AgentService"
             android:exported="false"
