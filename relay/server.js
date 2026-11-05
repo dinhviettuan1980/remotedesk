@@ -223,9 +223,14 @@ function viewerTenant(req) {
   return t && safeEqual(c, cookieFor(t)) ? t : null;
 }
 
-/** Tenant of a token in the Authorization header or ?t=, or null. */
+/**
+ * Tenant of a token in the Authorization header or ?t=, or null. The admin
+ * password counts as the admin token here too, as on /login, so a phone or an
+ * installer can be set up with the short password instead of the long token.
+ */
 function tokenTenant(req, url) {
-  return users.byToken(bearer(req, url));
+  const token = bearer(req, url);
+  return users.byToken(token) || (users.checkAdminPassword(token) ? users.admin : null);
 }
 
 // ---------------------------------------------------------------- state
